@@ -1,335 +1,244 @@
 import React, { useMemo, useState } from 'react';
-import { MetricCard } from './MetricCard';
-import { AssetTablePremium } from '@/features/assets/AssetTablePremium';
-import { SidePanel } from './ui/SidePanel';
 
-type ReceivableRow = {
-  accountCode: string;
-  accountName: string;
-  majorCode: string;
-  pendingInvoices: number;
-  analytic: number;
-};
-
-type AnalyticMovement = {
+type LedgerMovement = {
+  id: string;
   date: string;
-  voucher: string;
+  period: string;
   glosa: string;
+  account: string;
+  accountName: string;
+  cc: string;
   debit: number;
   credit: number;
-  balance: number;
-  hashOk: boolean;
+  module: string;
+  status: string;
+  hash: string;
+  risk: 'BAJO' | 'MEDIO' | 'ALTO';
 };
 
-const receivableRows: ReceivableRow[] = [
-  { accountCode: '12.1.1', accountName: 'Facturas por Cobrar', majorCode: '121100', pendingInvoices: 96, analytic: 300000 },
-  { accountCode: '12.1.2', accountName: 'Facturas por Cobrar - Retail', majorCode: '121200', pendingInvoices: 22, analytic: 56000 },
-  { accountCode: '12.1.3', accountName: 'Cobranza Dudosa', majorCode: '129100', pendingInvoices: 15, analytic: 25000 },
-  { accountCode: '12.1.4', accountName: 'Cobranza Judicial', majorCode: '129200', pendingInvoices: 4, analytic: 18500 },
+const movements: LedgerMovement[] = [
+  {
+    id: 'JE-2026-000184',
+    date: '2026-05-01',
+    period: '2026-05',
+    glosa: 'Compra S106-24119152-49 SEDALIB S.A.',
+    account: '636101',
+    accountName: 'Servicios básicos',
+    cc: 'LIM-ADM',
+    debit: 54.96,
+    credit: 0,
+    module: 'COMPRAS',
+    status: 'POSTEADO',
+    hash: '9b8a25ff6a4142a',
+    risk: 'BAJO',
+  },
+  {
+    id: 'JE-2026-000184-2',
+    date: '2026-05-01',
+    period: '2026-05',
+    glosa: 'IGV crédito fiscal compra SEDALIB',
+    account: '40111',
+    accountName: 'IGV crédito fiscal',
+    cc: '-',
+    debit: 9.89,
+    credit: 0,
+    module: 'COMPRAS',
+    status: 'SUNAT',
+    hash: '9b8a25ff6a4142a',
+    risk: 'BAJO',
+  },
+  {
+    id: 'JE-2026-000184-3',
+    date: '2026-05-01',
+    period: '2026-05',
+    glosa: 'Cuenta por pagar SEDALIB S.A.',
+    account: '4212',
+    accountName: 'Cuentas por pagar comerciales',
+    cc: '-',
+    debit: 0,
+    credit: 64.85,
+    module: 'COMPRAS',
+    status: 'POSTEADO',
+    hash: '9b8a25ff6a4142a',
+    risk: 'BAJO',
+  },
+  {
+    id: 'JE-2026-000185',
+    date: '2026-05-10',
+    period: '2026-05',
+    glosa: 'Venta F001-8422 cliente corporativo',
+    account: '1212',
+    accountName: 'Cuentas por cobrar comerciales',
+    cc: 'LIM-COM',
+    debit: 18880,
+    credit: 0,
+    module: 'VENTAS',
+    status: 'SUNAT',
+    hash: '8b2c3f6e4412a',
+    risk: 'BAJO',
+  },
 ];
 
-const movementMatrix: Record<string, AnalyticMovement[]> = {
-  '12.1.1': [
-    { date: '2026-05-10', voucher: 'V-000542', glosa: 'Venta F001-8421 cliente corporativo', debit: 18880, credit: 0, balance: 18880, hashOk: true },
-    { date: '2026-05-12', voucher: 'V-000550', glosa: 'Cobro parcial cliente corporativo', debit: 0, credit: 8880, balance: 10000, hashOk: true },
-    { date: '2026-05-16', voucher: 'V-000559', glosa: 'Nota de credito por pronto pago', debit: 0, credit: 320, balance: 9680, hashOk: true },
-  ],
-  '12.1.2': [
-    { date: '2026-05-05', voucher: 'V-000501', glosa: 'Venta retail lote mayo semana 1', debit: 22600, credit: 0, balance: 22600, hashOk: true },
-    { date: '2026-05-08', voucher: 'V-000518', glosa: 'Cobranza retail recaudacion caja', debit: 0, credit: 9200, balance: 13400, hashOk: true },
-  ],
-  '12.1.3': [
-    { date: '2026-05-03', voucher: 'AJ-000102', glosa: 'Provision cobranza dudosa cartera 61-90', debit: 11800, credit: 0, balance: 11800, hashOk: true },
-    { date: '2026-05-18', voucher: 'AJ-000109', glosa: 'Reclasificacion cartera sin respuesta', debit: 13200, credit: 0, balance: 25000, hashOk: true },
-  ],
-  '12.1.4': [
-    { date: '2026-05-06', voucher: 'AJ-000095', glosa: 'Traslado expediente a cobranza judicial', debit: 6000, credit: 0, balance: 6000, hashOk: true },
-    { date: '2026-05-22', voucher: 'AJ-000114', glosa: 'Costas judiciales provisionadas', debit: 12500, credit: 0, balance: 18500, hashOk: true },
-  ],
-};
+const accounts = [
+  { code: '10', name: 'Efectivo y equivalentes', type: 'ACTIVO' },
+  { code: '12', name: 'Cuentas por cobrar comerciales', type: 'ACTIVO' },
+  { code: '40', name: 'Tributos por pagar / crédito fiscal', type: 'PASIVO/TRIBUTO' },
+  { code: '42', name: 'Cuentas por pagar comerciales', type: 'PASIVO' },
+  { code: '60', name: 'Compras', type: 'GASTO/COSTO' },
+  { code: '63', name: 'Gastos de servicios prestados por terceros', type: 'GASTO' },
+  { code: '70', name: 'Ventas', type: 'INGRESO' },
+];
 
-export const DashboardEnterprise = () => {
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [selectedAccount, setSelectedAccount] = useState<ReceivableRow>(receivableRows[0]);
+const money = (n: number) =>
+  `S/ ${n.toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-  const notify = (message: string) => {
-    window.alert(message);
-  };
+export default function DashboardEnterprisePremium() {
+  const [selectedAccount, setSelectedAccount] = useState('636101');
+  const [search, setSearch] = useState('');
 
-  const exportSummary = () => {
-    const csv = [
-      'indicador,valor',
-      'Caja,482900',
-      'Cuentas por Cobrar,1284320',
-      'Cuentas por Pagar,712008',
-      'IGV,86240',
-      'Resultado,392600',
-    ].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = 'dashboard-resumen.csv';
-    anchor.click();
-    URL.revokeObjectURL(url);
-  };
+  const filteredMovements = useMemo(() => {
+    return movements.filter((m) => {
+      const matchesAccount = selectedAccount ? m.account.startsWith(selectedAccount.slice(0, 2)) || m.account === selectedAccount : true;
+      const matchesSearch = `${m.glosa} ${m.account} ${m.accountName} ${m.module}`
+        .toLowerCase()
+        .includes(search.toLowerCase());
+      return matchesAccount && matchesSearch;
+    });
+  }, [selectedAccount, search]);
 
-  const openAuditDrawer = (row: ReceivableRow) => {
-    setSelectedAccount(row);
-    setDrawerOpen(true);
-  };
+  const totalDebit = filteredMovements.reduce((a, b) => a + b.debit, 0);
+  const totalCredit = filteredMovements.reduce((a, b) => a + b.credit, 0);
 
-  const movements = useMemo(() => movementMatrix[selectedAccount.accountCode] ?? [], [selectedAccount.accountCode]);
-
-  const totalDebit = useMemo(() => movements.reduce((acc, item) => acc + item.debit, 0), [movements]);
-
-  const totalCredit = useMemo(() => movements.reduce((acc, item) => acc + item.credit, 0), [movements]);
-
-  const panelTitleStyle: React.CSSProperties = {
-    margin: 0,
-    fontSize: 12,
-    fontWeight: 800,
-    letterSpacing: 0.7,
-    textTransform: 'uppercase',
-    color: '#334155',
-  };
-
-  const panelHintStyle: React.CSSProperties = {
-    margin: '6px 0 0 0',
-    fontSize: 11,
-    color: '#64748b',
-  };
-
-  const tableCellRight: React.CSSProperties = {
-    textAlign: 'right',
-    fontVariantNumeric: 'tabular-nums',
-    fontFamily: 'Consolas, "Courier New", monospace',
-  };
+  const selectedDetail = filteredMovements[0];
 
   return (
-    <div className="main-layout min-h-screen">
-      <div className="command-bar">
-        <button className="btn-fluent-primary" type="button" onClick={() => notify('Panel de nueva venta en implementacion.')}>+ Nueva Venta</button>
-        <button className="btn-fluent-secondary" type="button" onClick={exportSummary}>Exportar Excel</button>
-        <button className="btn-fluent-secondary" type="button" onClick={() => openAuditDrawer(selectedAccount)}>Exportar PDF</button>
-        <div className="command-divider" />
-        <button className="btn-fluent-ghost" type="button" onClick={() => openAuditDrawer(selectedAccount)}>Auditoria IA</button>
+    <div className="sap-shell">
+      <div className="sap-topbar">
+        <strong>CONTA_PRO Enterprise</strong>
+        <span className="sap-pill">SPA Enterprise</span>
+        <span className="sap-pill green">Auditoría activa</span>
+        <input
+          className="sap-search"
+          placeholder="Buscar RUC, cuenta, asiento, hash, XML..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        <button className="sap-btn">Actualizar</button>
       </div>
 
-      <div style={{ padding: 24 }}>
-        <div
-          style={{
-            display: 'grid',
-            gap: 14,
-            marginBottom: 20,
-            gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-          }}
-        >
-          <MetricCard title="Caja" value="S/ 482,900" color="blue" trend="+2.4%" />
-          <MetricCard title="Cuentas por Cobrar" value="S/ 1,284,320" color="green" trend="+1.6%" />
-          <MetricCard title="Cuentas por Pagar" value="S/ 712,008" color="red" trend="-0.8%" />
-          <MetricCard title="IGV" value="S/ 86,240" color="orange" trend="+0.9%" />
-          <MetricCard title="Resultado" value="S/ 392,600" color="indigo" trend="+3.2%" />
-        </div>
-
-        <div className="dashboard-card overflow-hidden">
-          <div
-            style={{
-              padding: '12px 14px',
-              background: 'linear-gradient(180deg, #f8fbff 0%, #edf4fc 100%)',
-              borderBottom: '1px solid #dbe3ed',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 10,
-              flexWrap: 'wrap',
-            }}
-          >
-            <div>
-              <h3 style={panelTitleStyle}>Cuentas por Cobrar</h3>
-              <p style={panelHintStyle}>Click en una fila para abrir el informe de auditoria analitica</p>
-            </div>
-            <button className="btn-fluent-secondary" type="button" onClick={() => openAuditDrawer(selectedAccount)}>Informe analitico</button>
-          </div>
-          <div className="erp-scroll" style={{ overflowX: 'auto', padding: 10 }}>
-            <table className="erp-table" style={{ minWidth: 760 }}>
-            <thead>
-              <tr>
-                <th>Cuenta</th>
-                <th>Nombre</th>
-                <th>Cod Mayor</th>
-                <th style={{ textAlign: 'right' }}>Facturas</th>
-                <th style={{ textAlign: 'right' }}>Analitico</th>
-              </tr>
-            </thead>
-            <tbody>
-              {receivableRows.map((row) => (
-                <tr
-                  key={row.accountCode}
-                  style={{ cursor: 'pointer' }}
-                  onClick={() => openAuditDrawer(row)}
-                >
-                  <td style={{ fontWeight: 700, color: '#334155' }}>{row.accountCode}</td>
-                  <td style={{ fontWeight: 700, color: '#1d4ed8' }}>{row.accountName}</td>
-                  <td style={{ fontFamily: 'Consolas, "Courier New", monospace', fontSize: 11, color: '#475569' }}>{row.majorCode}</td>
-                  <td style={tableCellRight}>{row.pendingInvoices.toLocaleString('en-US')}</td>
-                  <td className="money">{row.analytic.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          </div>
-        </div>
-
-        <div className="dashboard-card overflow-hidden">
-          <div
-            style={{
-              padding: '12px 14px',
-              background: 'linear-gradient(180deg, #f8fbff 0%, #edf4fc 100%)',
-              borderBottom: '1px solid #dbe3ed',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 10,
-              flexWrap: 'wrap',
-            }}
-          >
-            <h3 style={panelTitleStyle}>Control de Activos Fijos</h3>
-            <button className="btn-fluent-secondary" type="button" onClick={() => notify('Formulario de activos en implementacion.')}>+ Agregar Activo</button>
-          </div>
-          <div className="erp-scroll" style={{ overflowX: 'auto', padding: 10 }}>
-            <table className="erp-table" style={{ minWidth: 860 }}>
-            <thead>
-              <tr>
-                <th>CODIGO</th>
-                <th>DESCRIPCION</th>
-                <th style={{ textAlign: 'right' }}>COSTO ORIG.</th>
-                <th style={{ textAlign: 'right' }}>DEP. ACUM.</th>
-                <th style={{ textAlign: 'right' }}>VALOR NETO</th>
-                <th style={{ textAlign: 'center' }}>ESTADO</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td style={{ fontFamily: 'Consolas, "Courier New", monospace', fontSize: 11 }}>ACT-2026-001</td>
-                <td style={{ fontWeight: 700, color: '#334155' }}>Camioneta Hilux 4x4 (Placa ABC-123)</td>
-                <td style={tableCellRight}>120,000.00</td>
-                <td style={{ ...tableCellRight, color: '#b91c1c', fontWeight: 700 }}>2,000.00</td>
-                <td className="money">118,000.00</td>
-                <td style={{ textAlign: 'center' }}>
-                  <span style={{ padding: '4px 8px', background: '#dcfce7', color: '#15803d', borderRadius: 999, fontSize: 10, fontWeight: 800 }}>OPERATIVO</span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-          </div>
-        </div>
-
-        <div className="dashboard-card" style={{ padding: 14 }}>
-          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 14, flexWrap: 'wrap' }}>
-            <div>
-              <h3 style={panelTitleStyle}>Datos Maestros de Inventario</h3>
-              <p style={panelHintStyle}>Articulo de referencia para auditoria de kardex y valorizacion</p>
-            </div>
-            <span style={{ display: 'inline-flex', alignItems: 'center', borderRadius: 999, background: '#fee2e2', padding: '4px 9px', fontSize: 10, fontWeight: 800, color: '#b91c1c' }}>Stock Critico</span>
-          </div>
-          <div
-            style={{
-              marginTop: 12,
-              display: 'grid',
-              gap: 10,
-              gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-            }}
-          >
-            <div style={{ borderRadius: 8, border: '1px solid #dbe3ed', background: '#fff', padding: 10 }}>
-              <p style={{ margin: 0, color: '#64748b', fontSize: 12 }}>Articulo</p>
-              <p style={{ margin: '6px 0 0 0', fontWeight: 800, color: '#1f2937', fontSize: 13 }}>HP Color Laser Jet</p>
-            </div>
-            <div style={{ borderRadius: 8, border: '1px solid #dbe3ed', background: '#fff', padding: 10 }}>
-              <p style={{ margin: 0, color: '#64748b', fontSize: 12 }}>Codigo de barra</p>
-              <p style={{ margin: '6px 0 0 0', fontFamily: 'Consolas, "Courier New", monospace', fontWeight: 800, color: '#1f2937', fontSize: 13 }}>A00004</p>
-            </div>
-            <div style={{ borderRadius: 8, border: '1px solid #dbe3ed', background: '#fff', padding: 10 }}>
-              <p style={{ margin: 0, color: '#64748b', fontSize: 12 }}>Precio unitario</p>
-              <p style={{ margin: '6px 0 0 0', fontFamily: 'Consolas, "Courier New", monospace', fontWeight: 800, color: '#1f2937', fontSize: 13 }}>2,500.00</p>
-            </div>
-            <div style={{ borderRadius: 8, border: '1px solid #dbe3ed', background: '#fff', padding: 10 }}>
-              <p style={{ margin: 0, color: '#64748b', fontSize: 12 }}>Stock real</p>
-              <p style={{ margin: '6px 0 0 0', fontFamily: 'Consolas, "Courier New", monospace', fontWeight: 800, color: '#1f2937', fontSize: 13 }}>10</p>
-            </div>
-          </div>
-          <div style={{ marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', borderRadius: 999, background: '#d1fae5', padding: '4px 8px', fontSize: 10, fontWeight: 800, color: '#047857' }}>Habido</span>
-            <span style={{ display: 'inline-flex', alignItems: 'center', borderRadius: 999, background: '#dbeafe', padding: '4px 8px', fontSize: 10, fontWeight: 800, color: '#1d4ed8' }}>Activo</span>
-            <span style={{ display: 'inline-flex', alignItems: 'center', borderRadius: 999, background: '#fef3c7', padding: '4px 8px', fontSize: 10, fontWeight: 800, color: '#b45309' }}>Reorden sugerido</span>
-          </div>
-        </div>
-
-        <AssetTablePremium />
+      <div className="sap-kpi-grid">
+        <div className="sap-kpi"><span>Caja</span><strong>{money(482900)}</strong><small>+2.4% vs mes anterior</small></div>
+        <div className="sap-kpi"><span>CXC</span><strong>{money(1284320.1)}</strong><small>96 documentos abiertos</small></div>
+        <div className="sap-kpi"><span>CXP</span><strong>{money(712008.44)}</strong><small>32 obligaciones pendientes</small></div>
+        <div className="sap-kpi"><span>IGV</span><strong>{money(86240)}</strong><small>Crédito fiscal controlado</small></div>
+        <div className="sap-kpi"><span>Resultado</span><strong>{money(392600.18)}</strong><small>Margen estable</small></div>
       </div>
 
-      <SidePanel
-        isOpen={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
-        title={`Informe de Auditoria Analitica: ${selectedAccount.accountCode}`}
-      >
-        <div className="audit-drawer-meta">
-          <p>Cuenta seleccionada</p>
-          <strong>{selectedAccount.accountName}</strong>
-          <span>Mayor: {selectedAccount.majorCode}</span>
-        </div>
+      <div className="sap-layout">
+        <aside className="sap-card sap-plan">
+          <h3>Plan Contable Vivo</h3>
+          {accounts.map((a) => (
+            <button
+              key={a.code}
+              className={`sap-account ${selectedAccount.startsWith(a.code) ? 'active' : ''}`}
+              onClick={() => setSelectedAccount(a.code)}
+            >
+              <span>{a.code}</span>
+              <div>
+                <strong>{a.name}</strong>
+                <small>{a.type}</small>
+              </div>
+            </button>
+          ))}
+        </aside>
 
-        <div className="audit-drawer-table-wrap">
-          <table className="audit-drawer-table erp-table">
+        <main className="sap-card">
+          <div className="sap-card-head">
+            <div>
+              <h3>Libro Diario / Mayor Analítico</h3>
+              <p>Click en una cuenta para ver movimientos, riesgo, hash y recomendaciones.</p>
+            </div>
+            <div className="sap-actions">
+              <button className="sap-btn">Exportar Excel</button>
+              <button className="sap-btn">PDF</button>
+              <button className="sap-btn blue">Auditoría IA</button>
+            </div>
+          </div>
+
+          <table className="sap-table">
             <thead>
               <tr>
                 <th>Fecha</th>
-                <th>Voucher</th>
+                <th>Periodo</th>
+                <th>Glosa</th>
+                <th>Cuenta</th>
+                <th>CC</th>
                 <th>Debe</th>
                 <th>Haber</th>
-                <th>Saldo</th>
+                <th>Estado</th>
+                <th>Módulo</th>
                 <th>Hash</th>
               </tr>
             </thead>
             <tbody>
-              {movements.map((item) => (
-                <tr key={`${item.voucher}-${item.date}`}>
-                  <td>{item.date}</td>
-                  <td title={item.glosa}>{item.voucher}</td>
-                  <td className="money">{item.debit.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
-                  <td className="money">{item.credit.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
-                  <td className="money strong">{item.balance.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
-                  <td className="hash">{item.hashOk ? 'LOCK' : 'WARN'}</td>
+              {filteredMovements.map((m) => (
+                <tr key={m.id} onClick={() => setSelectedAccount(m.account)}>
+                  <td>{m.date}</td>
+                  <td>{m.period}</td>
+                  <td>{m.glosa}</td>
+                  <td><strong>{m.account}</strong><br /><small>{m.accountName}</small></td>
+                  <td>{m.cc}</td>
+                  <td className="money">{m.debit ? money(m.debit) : '-'}</td>
+                  <td className="money">{m.credit ? money(m.credit) : '-'}</td>
+                  <td><span className={`sap-badge ${m.risk.toLowerCase()}`}>{m.status}</span></td>
+                  <td>{m.module}</td>
+                  <td className="hash">{m.hash}</td>
                 </tr>
               ))}
             </tbody>
+            <tfoot>
+              <tr>
+                <td colSpan={5}>Totales visibles</td>
+                <td>{money(totalDebit)}</td>
+                <td>{money(totalCredit)}</td>
+                <td colSpan={3}>{Math.abs(totalDebit - totalCredit) < 0.01 ? 'Asiento cuadrado' : 'Diferencia detectada'}</td>
+              </tr>
+            </tfoot>
           </table>
-        </div>
+        </main>
 
-        <div className="audit-drawer-summary">
-          <div>
-            <span>Total Debe</span>
-            <strong>{totalDebit.toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong>
-          </div>
-          <div>
-            <span>Total Haber</span>
-            <strong>{totalCredit.toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong>
-          </div>
-          <div>
-            <span>Saldo</span>
-            <strong>{(totalDebit - totalCredit).toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong>
-          </div>
-        </div>
+        <aside className="sap-card sap-detail">
+          <h3>Detalle Analítico</h3>
+          {selectedDetail ? (
+            <>
+              <p><b>Asiento:</b> {selectedDetail.id}</p>
+              <p><b>Cuenta:</b> {selectedDetail.account} - {selectedDetail.accountName}</p>
+              <p><b>Centro costo:</b> {selectedDetail.cc}</p>
+              <p><b>Módulo:</b> {selectedDetail.module}</p>
+              <p><b>Estado:</b> {selectedDetail.status}</p>
+              <p><b>Hash:</b> {selectedDetail.hash}</p>
 
-        <section className="audit-recommendation">
-          <h4>Observaciones y Recomendaciones IA</h4>
-          <ul>
-            <li>Se observa concentracion de cartera en tramo 61-90 dias (Cta 12.1.3).</li>
-            <li>Aplicar recordatorios automaticos y bloqueo de nueva venta para clientes sin respuesta.</li>
-            <li>Ejecutar conciliacion de cobranzas para reducir saldo vencido antes del cierre de mayo.</li>
-          </ul>
-        </section>
-      </SidePanel>
+              <div className="sap-chart">
+                <div style={{ height: 38 }} />
+                <div style={{ height: 62 }} />
+                <div style={{ height: 24 }} />
+                <div style={{ height: 76 }} />
+                <div style={{ height: 45 }} />
+              </div>
+
+              <h4>Recomendación IA</h4>
+              <ul>
+                <li>Validar causalidad del gasto.</li>
+                <li>Confirmar centro de costo asignado.</li>
+                <li>Revisar detracción si el servicio aplica.</li>
+                <li>Verificar que el asiento esté cuadrado y con hash vigente.</li>
+              </ul>
+            </>
+          ) : (
+            <p>Selecciona una cuenta o movimiento.</p>
+          )}
+        </aside>
+      </div>
     </div>
   );
-};
+}

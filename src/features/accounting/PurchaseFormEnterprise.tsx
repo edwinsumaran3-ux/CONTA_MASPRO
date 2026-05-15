@@ -308,9 +308,26 @@ export const PurchaseFormEnterprise = ({ form, onFormChange, onClose, onSubmit }
     setAiWarnings([]);
 
     try {
-      const token = localStorage.getItem('access_token') || localStorage.getItem('token') || '';
-      const tenantId = localStorage.getItem('tenant_id') || 'tenant-demo';
+     const tenantId = localStorage.getItem('tenant_id') || 'tenant-demo';
 
+      const tokenResponse = await fetch(`${API_BASE}/auth/dev-token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          tenant_id: tenantId,
+          user_id: 'erp.operator',
+          role: 'ADMIN',
+        }),
+      });
+
+      if (!tokenResponse.ok) {
+        throw new Error(await tokenResponse.text());
+      }
+
+      const tokenPayload = await tokenResponse.json();
+      const token = tokenPayload.access_token;
       const formData = new FormData();
       formData.append('file', file);
 
