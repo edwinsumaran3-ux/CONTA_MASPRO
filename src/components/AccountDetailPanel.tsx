@@ -26,3 +26,4 @@ export const AccountDetailPanel = ({ accountCode, isOpen, onClose, children }: A
     </div>
   );
 };
+export default AccountDetailPanel;
