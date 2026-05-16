@@ -40,18 +40,39 @@ import DashboardEnterprise from '../../components/DashboardEnterprise';
 import AccountDetailPanel from '../../components/AccountDetailPanel';
 import { LedgerAnalytic } from './LedgerAnalytic';
 
+type JournalLineDetail = {
+  id?: string;
+  account_code?: string;
+  account_name?: string;
+  cost_center?: string;
+  debit?: string;
+  credit?: string;
+  partner_ruc?: string;
+  document_type?: string;
+  document_series?: string;
+  document_number?: string;
+};
+
 type JournalRow = {
   id: string;
+  entryId?: string;
   date: string;
   period: string;
   description: string;
   account: string;
+  accountName?: string;
   costCenter: string;
   debit: string;
   credit: string;
   status: string;
   hash: string;
+  previousHash?: string;
   sourceModule: string;
+  partnerRuc?: string;
+  documentType?: string;
+  documentSeries?: string;
+  documentNumber?: string;
+  lines?: JournalLineDetail[];
 };
 
 type PanelType = 'VENTA' | 'COMPRA' | 'CHECKLIST' | null;
@@ -92,6 +113,37 @@ const MAX_JOURNAL_ROWS = 3000;
 const MAX_RENDER_ROWS = 1200;
 
 const getTenantId = () => localStorage.getItem('tenant_id') || '11111111-1111-1111-1111-111111111111';
+
+const moduleLabel = (module?: string) => {
+  const value = String(module || '').toUpperCase();
+
+  if (value === 'PURCHASING') return 'COMPRAS';
+  if (value === 'BILLING') return 'VENTAS';
+  if (value === 'ACCOUNTING') return 'CONTABILIDAD';
+  if (value === 'TREASURY') return 'TESORERIA';
+  if (value === 'INVENTORY') return 'INVENTARIO';
+  if (value === 'PAYROLL') return 'PLANILLAS';
+  if (value === 'ASSETS') return 'ACTIVOS';
+
+  return value || 'CONTABILIDAD';
+};
+
+const statusLabel = (status?: string) => {
+  const value = String(status || '').toUpperCase();
+
+  if (value === 'POSTED') return 'POSTEADO';
+  if (value === 'PENDING') return 'PENDIENTE';
+  if (value === 'REVIEW') return 'REVISION';
+  if (value === 'SUNAT') return 'SUNAT';
+
+  return value || 'PENDIENTE';
+};
+
+const formatMoney = (value: string | number | undefined | null) => {
+  const amount = toNumber(value);
+  return amount.toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
+
 
 const seedRows: JournalRow[] = [
   { id: 'JE-2026-000184', date: '2026-05-10', period: '2026-05', description: 'Venta F001-8421 cliente enterprise', account: '1212', costCenter: 'LIM-COM', debit: '18,880.00', credit: '0.00', status: 'SUNAT', hash: '9b82c5f0f6e4142a', sourceModule: 'VENTAS' },
@@ -235,27 +287,58 @@ export const EnterpriseWorkspace = () => {
   };
 
   const loadJournal = async (bearerToken: string) => {
+    const tenantId = getTenantId();
     const response = await fetch(`${API_BASE}/ledger/journal?year=2026&month=5&limit=250`, {
-      headers: authHeaders(bearerToken),
+      headers: authHeaders(bearerToken, tenantId),
     });
     if (!response.ok) {
       throw new Error('No se pudo consultar libro diario');
     }
+
     const payload = await response.json();
     const payloadRows = Array.isArray(payload) ? payload.slice(0, MAX_JOURNAL_ROWS) : [];
-    const mapped = payloadRows.map((item, index) => ({
-      id: item.id ?? `JE-${index + 1}`,
-      date: item.entry_date ?? '2026-05-01',
-      period: item.period || '2026-05',
-      description: item.description || 'Sin descripcion',
-      account: item.account_code ?? item.account ?? item.expense_account ?? item.lines?.[0]?.account_code ?? 'N/A',
-      costCenter: item.cost_center ?? item.costCenter ?? item.lines?.[0]?.cost_center ?? 'N/A',
-      debit: item.total_debit ?? '0.00',
-      credit: item.total_credit ?? '0.00',
-      status: item.sunat_status ?? 'POSTED',
-      hash: item.row_hash ?? 'sin-hash',
-      sourceModule: item.source_module ?? 'ACCOUNTING',
-    }));
+
+    const mapped = payloadRows.flatMap((item, entryIndex) => {
+      const lines = Array.isArray(item.lines) ? item.lines : [];
+      const base = {
+        entryId: item.id ?? `JE-${entryIndex + 1}`,
+        date: item.entry_date ?? '2026-05-01',
+        period: item.period || '2026-05',
+        description: item.description || 'Sin descripcion',
+        status: statusLabel(item.sunat_status ?? item.status),
+        hash: item.row_hash ?? 'sin-hash',
+        previousHash: item.previous_hash,
+        sourceModule: moduleLabel(item.source_module),
+        lines,
+      };
+
+      if (lines.length === 0) {
+        return [{
+          ...base,
+          id: String(base.entryId),
+          account: item.account_code ?? item.account ?? item.expense_account ?? 'N/A',
+          accountName: item.account_name ?? '',
+          costCenter: item.cost_center ?? item.costCenter ?? 'N/A',
+          debit: formatMoney(item.total_debit ?? '0.00'),
+          credit: formatMoney(item.total_credit ?? '0.00'),
+        }];
+      }
+
+      return lines.map((line, lineIndex) => ({
+        ...base,
+        id: `${base.entryId}-${lineIndex}`,
+        account: line.account_code || 'N/A',
+        accountName: line.account_name || '',
+        costCenter: line.cost_center || '-',
+        debit: formatMoney(line.debit ?? '0.00'),
+        credit: formatMoney(line.credit ?? '0.00'),
+        partnerRuc: line.partner_ruc,
+        documentType: line.document_type,
+        documentSeries: line.document_series,
+        documentNumber: line.document_number,
+      }));
+    });
+
     const resultRows = mapped.length ? mapped : seedRows;
     setRows(resultRows);
     setSelectedRow(resultRows[0]);
@@ -621,7 +704,7 @@ export const EnterpriseWorkspace = () => {
                       <span>{row.date}</span>
                       <span>{row.period}</span>
                       <span className="truncate">{row.description}</span>
-                      <span>{row.account}</span>
+                      <span title={row.accountName || row.account}>{row.account}</span>
                       <span>{row.costCenter}</span>
                       <span className="money">{row.debit}</span>
                       <span className="money">{row.credit}</span>
@@ -639,16 +722,48 @@ export const EnterpriseWorkspace = () => {
               <div className="unified-analytic-box">
                 {selectedRow ? (
                   <div className="unified-analytic-content">
-                    <p><strong>Asiento:</strong> {selectedRow.id}</p>
+                    <p><strong>Asiento:</strong> {selectedRow.entryId || selectedRow.id}</p>
                     <p><strong>Fecha:</strong> {selectedRow.date}</p>
                     <p><strong>Periodo:</strong> {selectedRow.period}</p>
-                    <p><strong>Cuenta:</strong> {selectedRow.account}</p>
+                    <p><strong>Glosa:</strong> {selectedRow.description}</p>
+                    <p><strong>Cuenta:</strong> {selectedRow.account} {selectedRow.accountName ? `- ${selectedRow.accountName}` : ''}</p>
                     <p><strong>CC:</strong> {selectedRow.costCenter}</p>
                     <p><strong>Estado:</strong> {selectedRow.status}</p>
                     <p><strong>Modulo:</strong> {selectedRow.sourceModule}</p>
                     <p><strong>Debe:</strong> {selectedRow.debit}</p>
                     <p><strong>Haber:</strong> {selectedRow.credit}</p>
+                    {selectedRow.documentSeries && selectedRow.documentNumber && (
+                      <p><strong>Documento:</strong> {selectedRow.documentSeries}-{selectedRow.documentNumber}</p>
+                    )}
+                    {selectedRow.partnerRuc && <p><strong>RUC:</strong> {selectedRow.partnerRuc}</p>}
                     <p className="unified-hash-line"><strong>HASH:</strong> {selectedRow.hash}</p>
+                    {selectedRow.lines && selectedRow.lines.length > 0 && (
+                      <div style={{ marginTop: 12 }}>
+                        <strong>Lineas del asiento</strong>
+                        <table className="erp-table" style={{ width: '100%', marginTop: 8, fontSize: 11 }}>
+                          <thead>
+                            <tr>
+                              <th>Cuenta</th>
+                              <th>Descripcion</th>
+                              <th>CC</th>
+                              <th>Debe</th>
+                              <th>Haber</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {selectedRow.lines.map((line, index) => (
+                              <tr key={`${line.account_code}-${index}`}>
+                                <td>{line.account_code || 'N/A'}</td>
+                                <td>{line.account_name || ''}</td>
+                                <td>{line.cost_center || '-'}</td>
+                                <td style={{ textAlign: 'right' }}>{formatMoney(line.debit ?? '0.00')}</td>
+                                <td style={{ textAlign: 'right' }}>{formatMoney(line.credit ?? '0.00')}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <p className="unified-empty-note">Seleccione un movimiento para ver el HASH de inmutabilidad.</p>

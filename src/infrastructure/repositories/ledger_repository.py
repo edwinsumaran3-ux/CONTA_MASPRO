@@ -190,3 +190,158 @@ class LedgerRepository:
             reason=reason,
             ai_diagnosis=ai_diagnosis,
         ))
+
+
+# --- COMPATIBILIDAD CONTA_PRO ENTERPRISE: PLAN CONTABLE / CENTROS DE COSTO ---
+from uuid import uuid4 as _uuid4
+from sqlalchemy import and_ as _and_, select as _select
+from sqlalchemy.orm import selectinload as _selectinload
+from src.domain.models.accounting import (
+    ChartAccount as _ChartAccount,
+    CostCenter as _CostCenter,
+    JournalEntry as _JournalEntry,
+)
+
+async def _repo_upsert_chart_account(
+    self,
+    tenant_id: str,
+    *,
+    company_id=None,
+    code: str,
+    name: str,
+    account_class: str,
+    statement: str,
+    nature: str,
+    accepts_cost_center: bool = False,
+    accepts_partner: bool = False,
+):
+    clean_code = str(code or "").strip()
+    if not clean_code:
+        return None
+
+    conditions = [
+        _ChartAccount.tenant_id == tenant_id,
+        _ChartAccount.code == clean_code,
+    ]
+
+    if hasattr(_ChartAccount, "company_id"):
+        if company_id is None:
+            conditions.append(_ChartAccount.company_id.is_(None))
+        else:
+            conditions.append(_ChartAccount.company_id == company_id)
+
+    result = await self.session.execute(
+        _select(_ChartAccount).where(_and_(*conditions))
+    )
+    account = result.scalar_one_or_none()
+
+    if account is None:
+        kwargs = {
+            "tenant_id": tenant_id,
+            "code": clean_code,
+            "name": name or f"Cuenta {clean_code}",
+            "account_class": str(account_class or clean_code[:1] or "0")[:2],
+            "statement": statement or "UNCLASSIFIED",
+            "nature": nature or "DEBIT",
+            "accepts_cost_center": bool(accepts_cost_center),
+            "accepts_partner": bool(accepts_partner),
+            "is_active": True,
+        }
+
+        if hasattr(_ChartAccount, "id"):
+            kwargs["id"] = _uuid4()
+        if hasattr(_ChartAccount, "company_id"):
+            kwargs["company_id"] = company_id
+
+        account = _ChartAccount(**kwargs)
+        self.session.add(account)
+    else:
+        account.name = name or account.name
+        account.account_class = str(account_class or account.account_class or clean_code[:1] or "0")[:2]
+        account.statement = statement or account.statement
+        account.nature = nature or account.nature
+        account.accepts_cost_center = bool(accepts_cost_center)
+        account.accepts_partner = bool(accepts_partner)
+        account.is_active = True
+
+    return account
+
+
+async def _repo_upsert_cost_center(
+    self,
+    tenant_id: str,
+    *,
+    company_id=None,
+    code: str,
+    name: str | None = None,
+    parent_code: str | None = None,
+):
+    clean_code = str(code or "").strip().upper()
+    if not clean_code or clean_code == "-":
+        return None
+
+    conditions = [
+        _CostCenter.tenant_id == tenant_id,
+        _CostCenter.code == clean_code,
+    ]
+
+    if hasattr(_CostCenter, "company_id"):
+        if company_id is None:
+            conditions.append(_CostCenter.company_id.is_(None))
+        else:
+            conditions.append(_CostCenter.company_id == company_id)
+
+    result = await self.session.execute(
+        _select(_CostCenter).where(_and_(*conditions))
+    )
+    center = result.scalar_one_or_none()
+
+    if center is None:
+        kwargs = {
+            "tenant_id": tenant_id,
+            "code": clean_code,
+            "name": name or clean_code,
+            "parent_code": parent_code,
+            "is_active": True,
+        }
+
+        if hasattr(_CostCenter, "id"):
+            kwargs["id"] = _uuid4()
+        if hasattr(_CostCenter, "company_id"):
+            kwargs["company_id"] = company_id
+
+        center = _CostCenter(**kwargs)
+        self.session.add(center)
+    else:
+        center.name = name or center.name or clean_code
+        center.parent_code = parent_code or center.parent_code
+        center.is_active = True
+
+    return center
+
+
+async def _repo_get_entry_with_lines(self, tenant_id: str, entry_id):
+    result = await self.session.execute(
+        _select(_JournalEntry)
+        .options(_selectinload(_JournalEntry.lines))
+        .where(
+            _and_(
+                _JournalEntry.tenant_id == tenant_id,
+                _JournalEntry.id == entry_id,
+            )
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+if not hasattr(LedgerRepository, "upsert_chart_account"):
+    LedgerRepository.upsert_chart_account = _repo_upsert_chart_account
+
+if not hasattr(LedgerRepository, "upsert_cost_center"):
+    LedgerRepository.upsert_cost_center = _repo_upsert_cost_center
+
+if not hasattr(LedgerRepository, "get_entry_with_lines"):
+    LedgerRepository.get_entry_with_lines = _repo_get_entry_with_lines
+
+# --- FIN COMPATIBILIDAD CONTA_PRO ENTERPRISE ---
+

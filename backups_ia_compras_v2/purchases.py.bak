@@ -17,10 +17,6 @@ router = APIRouter(prefix="/purchases", tags=["Purchases IA"])
 CENTRO_COSTO_DEFAULT = "LIM-ADM"
 ROUNDING_EXPENSE_ACCOUNT = "659101"
 ROUNDING_INCOME_ACCOUNT = "759901"
-PRIOR_BALANCE_ACCOUNT = "421201"
-PAYABLE_ACCOUNT = "4212"
-IGV_CREDIT_ACCOUNT = "40111"
-AUTO_ROUNDING_TOLERANCE = Decimal("0.50")
 
 COST_CENTER_LIBRARY = {
     "LIM-ADM": {
@@ -37,7 +33,7 @@ COST_CENTER_LIBRARY = {
     },
     "FIN-CXP": {
         "name": "Cuentas por Pagar",
-        "keywords": ["proveedor", "cuentas por pagar", "cxp", "deuda anterior", "saldo anterior"],
+        "keywords": ["proveedor", "cuentas por pagar", "cxp"],
     },
     "FIN-CXC": {
         "name": "Cuentas por Cobrar",
@@ -74,7 +70,6 @@ PCGE_RULE_LIBRARY = [
         "tax_treatment": "IGV credito fiscal si cumple causalidad, comprobante valido, RUC valido y anotacion oportuna.",
         "deductibility": "DEDUCIBLE",
         "igv_credit": "SI",
-        "requires_support": False,
     },
     {
         "account_code": "632101",
@@ -84,7 +79,6 @@ PCGE_RULE_LIBRARY = [
         "tax_treatment": "Gasto deducible sujeto a causalidad, fehaciencia, sustento documental y bancarizacion cuando corresponda.",
         "deductibility": "DEDUCIBLE",
         "igv_credit": "SI",
-        "requires_support": False,
     },
     {
         "account_code": "624101",
@@ -94,7 +88,6 @@ PCGE_RULE_LIBRARY = [
         "tax_treatment": "Evaluar detraccion si corresponde por servicio de transporte de bienes y validar sustento.",
         "deductibility": "DEDUCIBLE",
         "igv_credit": "SI",
-        "requires_support": False,
     },
     {
         "account_code": "634101",
@@ -104,7 +97,6 @@ PCGE_RULE_LIBRARY = [
         "tax_treatment": "Gasto deducible si esta vinculado con bienes o actividades del negocio.",
         "deductibility": "DEDUCIBLE",
         "igv_credit": "SI",
-        "requires_support": False,
     },
     {
         "account_code": "635101",
@@ -114,7 +106,6 @@ PCGE_RULE_LIBRARY = [
         "tax_treatment": "Revisar contrato, comprobante, detraccion si corresponde y fehaciencia del uso del inmueble.",
         "deductibility": "DEDUCIBLE",
         "igv_credit": "SI",
-        "requires_support": False,
     },
     {
         "account_code": "637101",
@@ -124,7 +115,6 @@ PCGE_RULE_LIBRARY = [
         "tax_treatment": "Deducible si acredita necesidad comercial, causalidad, fehaciencia y sustento documental.",
         "deductibility": "DEDUCIBLE",
         "igv_credit": "SI",
-        "requires_support": False,
     },
     {
         "account_code": "656101",
@@ -134,7 +124,6 @@ PCGE_RULE_LIBRARY = [
         "tax_treatment": "Gasto operativo deducible si cumple causalidad y sustento.",
         "deductibility": "DEDUCIBLE",
         "igv_credit": "SI",
-        "requires_support": False,
     },
     {
         "account_code": "336101",
@@ -144,7 +133,6 @@ PCGE_RULE_LIBRARY = [
         "tax_treatment": "No enviar directo a gasto si supera politica de capitalizacion; activar y depreciar segun politica contable.",
         "deductibility": "REVISION",
         "igv_credit": "REVISION",
-        "requires_support": True,
     },
     {
         "account_code": "601101",
@@ -154,7 +142,6 @@ PCGE_RULE_LIBRARY = [
         "tax_treatment": "Afecta inventario/kardex y costo de ventas segun politica de inventarios.",
         "deductibility": "DEDUCIBLE",
         "igv_credit": "SI",
-        "requires_support": False,
     },
 ]
 
@@ -166,8 +153,7 @@ LEGAL_TAX_REVIEW_LIBRARY = [
     "Detraccion: revisar servicios sujetos al SPOT segun naturaleza del servicio y porcentaje vigente.",
     "Retencion/percepcion: evaluar condicion del proveedor, regimen aplicable y comprobante.",
     "No deducibles u observados: multas, sanciones, gastos personales, liberalidades o conceptos sin causalidad.",
-    "Servicios publicos: separar consumo actual, cargo fijo, alumbrado publico, mantenimiento, deuda anterior, pagos a cuenta, mora/intereses, redondeos e IGV.",
-    "Redondeo monetario: linea tecnica de conciliacion. No integra base imponible del IGV ni genera credito fiscal; no debe bloquear si esta dentro de tolerancia razonable.",
+    "Servicios publicos: separar consumo, cargo fijo, alumbrado publico, mantenimiento, mora/intereses, redondeos e IGV.",
 ]
 
 
@@ -195,83 +181,7 @@ def _norm_upper(value: Any) -> str:
     return _norm_text(value).upper()
 
 
-def _only_digits(value: Any) -> str:
-    return re.sub(r"\D", "", str(value or ""))
-
-
-def _is_valid_ruc(value: Any) -> bool:
-    digits = _only_digits(value)
-    return len(digits) == 11 and digits[:2] in {"10", "15", "17", "20"}
-
-
-def _line_kind(description: str, code: str = "") -> str:
-    text = f"{code} {description}".upper()
-    if re.search(r"REDONDEO|ROUNDING|AJUSTE\s+MONEDA|DIFERENCIA\s+DE\s+REDONDEO|REDONDEO\s+MES", text):
-        return "ROUNDING"
-    if re.search(r"DEUDA\s+ANT|DEUDA\s+ANTERIOR|SALDO\s+ANTERIOR|SALDO\s+VENCIDO|RECIBO\s+ANTERIOR|PENDIENTE\s+DE\s+PAGO|CARGO\s+ANTERIOR", text):
-        return "PRIOR_BALANCE"
-    if re.search(r"PAGO\s+A\s+CUENTA|ABONO|SALDO\s+A\s+FAVOR|CREDITO\s+ANTERIOR|CR[EÉ]DITO\s+ANTERIOR|COMPENSACION|COMPENSACI[OÓ]N", text):
-        return "ADVANCE_PAYMENT"
-    if re.search(r"MORA|INTER[EÉ]S|INTERES|PENALIDAD|RECARGO|CARGO\s+POR\s+ATRASO", text):
-        return "LATE_FEE"
-    return "NORMAL"
-
-
 def _classify_local(description: str, supplier_name: str = "", fallback_cost_center: str = CENTRO_COSTO_DEFAULT) -> dict[str, Any]:
-    kind = _line_kind(description)
-    if kind == "ROUNDING":
-        return {
-            "account_code": ROUNDING_EXPENSE_ACCOUNT,
-            "account_name": "Ajuste por redondeo",
-            "cost_center": fallback_cost_center,
-            "tax_treatment": "Redondeo monetario del comprobante. No integra base imponible del IGV, no genera credito fiscal y se usa para reconciliar el total impreso.",
-            "deductibility": "DEDUCIBLE",
-            "igv_credit": "NO",
-            "requires_support": False,
-            "line_type": "ROUNDING",
-            "ai_reason": "Linea tecnica de redondeo/ajuste monetario.",
-            "ai_confidence": 0.99,
-        }
-    if kind == "PRIOR_BALANCE":
-        return {
-            "account_code": PRIOR_BALANCE_ACCOUNT,
-            "account_name": "Cuentas por pagar - deuda anterior",
-            "cost_center": "-",
-            "tax_treatment": "Saldo/deuda de periodo anterior. No representa gasto nuevo ni genera nuevo IGV credito fiscal; validar que la obligacion original fue registrada.",
-            "deductibility": "REVISION",
-            "igv_credit": "NO",
-            "requires_support": False,
-            "line_type": "PRIOR_BALANCE",
-            "ai_reason": "La linea corresponde a deuda o saldo anterior incluido en el recibo.",
-            "ai_confidence": 0.96,
-        }
-    if kind == "ADVANCE_PAYMENT":
-        return {
-            "account_code": PAYABLE_ACCOUNT,
-            "account_name": "Compensacion / pago a cuenta",
-            "cost_center": "-",
-            "tax_treatment": "Pago a cuenta, abono o saldo a favor. No es gasto nuevo y no genera IGV; se aplica como compensacion de cuenta por pagar.",
-            "deductibility": "NO_DEDUCIBLE",
-            "igv_credit": "NO",
-            "requires_support": False,
-            "line_type": "ADVANCE_PAYMENT",
-            "ai_reason": "La linea corresponde a abono, credito o pago a cuenta.",
-            "ai_confidence": 0.96,
-        }
-    if kind == "LATE_FEE":
-        return {
-            "account_code": "659101",
-            "account_name": "Moras, recargos e intereses por servicios",
-            "cost_center": fallback_cost_center,
-            "tax_treatment": "Mora, penalidad o recargo. No mezclar con el servicio principal. Deducibilidad e IGV sujetos a revision y sustento.",
-            "deductibility": "REVISION",
-            "igv_credit": "NO",
-            "requires_support": True,
-            "line_type": "LATE_FEE",
-            "ai_reason": "La linea corresponde a mora, recargo o penalidad.",
-            "ai_confidence": 0.86,
-        }
-
     text = f"{description} {supplier_name}".lower()
     for rule in PCGE_RULE_LIBRARY:
         if any(keyword.lower() in text for keyword in rule["keywords"]):
@@ -283,8 +193,6 @@ def _classify_local(description: str, supplier_name: str = "", fallback_cost_cen
                 "tax_treatment": rule["tax_treatment"],
                 "deductibility": rule["deductibility"],
                 "igv_credit": rule["igv_credit"],
-                "requires_support": bool(rule.get("requires_support", False)),
-                "line_type": "EXPENSE_OR_ASSET",
                 "ai_reason": f"Clasificado por regla PCGE/local: {rule['account_name']}.",
                 "ai_confidence": 0.93,
             }
@@ -295,8 +203,6 @@ def _classify_local(description: str, supplier_name: str = "", fallback_cost_cen
         "tax_treatment": "Requiere revision contable y tributaria por falta de regla confiable.",
         "deductibility": "REVISION",
         "igv_credit": "REVISION",
-        "requires_support": True,
-        "line_type": "EXPENSE_OR_ASSET",
         "ai_reason": "No se identifico una regla contable confiable.",
         "ai_confidence": 0.55,
     }
@@ -333,17 +239,10 @@ def _json_schema_instruction() -> str:
     return f"""
 Devuelve SOLO JSON valido, sin markdown, sin explicaciones fuera del JSON.
 
-Eres CONTA_PRO Vision Accounting Engine, motor contable, tributario, legal-documentario y de auditoria para un ERP peruano empresarial.
+Eres un motor contable, tributario, legal-documentario y de auditoria para un ERP peruano empresarial.
 
 REGLA PRINCIPAL INNEGOCIABLE:
 El TOTAL A PAGAR impreso en el comprobante manda. No modifiques el total para hacerlo coincidir con tus calculos. Si la suma de conceptos no coincide, crea una linea de ajuste por redondeo/diferencia de lectura y marca observacion.
-
-LECTURA PIXEL POR PIXEL Y ROLES DE DATOS:
-1. Lee el comprobante completo, incluyendo encabezado, logo, datos del emisor, datos del cliente, periodo, detalle, totales, notas pequeñas, QR y talon.
-2. El proveedor/emisor es la empresa que emite/cobra el comprobante. NO confundas el RUC del cliente, DNI, codigo de suministro, numero de medidor, codigo de pago, recibo o numero de contrato con el RUC proveedor.
-3. El supplier_ruc debe ser un RUC de 11 digitos del emisor/proveedor. Si no estas seguro, deja supplier_ruc vacio y agrega warning. No inventes RUC.
-4. supplier_name debe ser la razon social/nombre comercial del emisor/proveedor. Si no esta legible, deja vacio y agrega warning.
-5. En recibos de servicios publicos, distingue: empresa emisora, titular/cliente, suministro, codigo de pago, medidor y recibo.
 
 BIBLIOTECA PCGE/CRITERIOS BASE:
 {pcge_rules}
@@ -354,13 +253,17 @@ BIBLIOTECA CENTROS DE COSTO:
 BIBLIOTECA DE REVISION TRIBUTARIA/LEGAL:
 {legal_rules}
 
-REGLAS ESPECIALES OBLIGATORIAS:
-- REDONDEO / ROUNDING / REDONDEO MES ACTUAL: linea tecnica de conciliacion monetaria. No es base imponible, no genera IGV, no requiere sustento humano si el importe es pequeno/razonable. Si aumenta el total, usar 659101 al debe. Si disminuye el total, usar 759901 al haber.
-- DEUDA ANTERIOR / SALDO ANTERIOR / RECIBO ANTERIOR / SALDO VENCIDO: no es gasto nuevo, no genera nuevo IGV credito fiscal. Usar 421201 como deuda anterior/obligacion previa al debe si esta incluida dentro del total a pagar.
-- PAGO A CUENTA / ABONO / SALDO A FAVOR / CREDITO ANTERIOR: no es gasto, no genera IGV. Tratar como compensacion o reduccion de cuenta por pagar.
-- MORA / INTERES / PENALIDAD / RECARGO: no mezclar con servicios basicos. Clasificar separado, usualmente 659101, IGV credito NO/REVISION y requiere sustento.
-- IGV: separar en 40111 solo si corresponde credito fiscal. No calcules IGV sobre deuda anterior, pago a cuenta, redondeo, mora o conceptos no gravados.
-- Centros de costo: cuentas clase 6 o 9 deben tener centro de costo por linea.
+TAREAS:
+1. Lee el comprobante pixel por pixel.
+2. Extrae proveedor, RUC, serie, numero, fecha, vencimiento, periodo de consumo, moneda y TOTAL A PAGAR.
+3. Extrae todos los conceptos visibles: consumo, cargo fijo, alumbrado publico, reposicion/mantenimiento, mora, intereses, redondeo, descuento, detraccion, retencion, percepcion, IGV, total.
+4. No omitas importes pequenos.
+5. Clasifica cada concepto con cuenta PCGE y centro de costo por linea.
+6. Separa IGV como linea tributaria, no lo mezcles con gasto.
+7. Evalua causalidad, fehaciencia, bancarizacion, detraccion/retencion/percepcion, IGV credito fiscal y necesidad de sustento.
+8. Genera account_lines con partida doble estricta: Debe = Haber.
+9. El Haber de Cuentas por Pagar debe ser el TOTAL A PAGAR del comprobante, salvo detraccion/retencion/percepcion expresamente identificada.
+10. Si hay diferencia por redondeo, crea linea ROUNDING.
 
 FORMATO JSON OBLIGATORIO:
 {{
@@ -396,7 +299,6 @@ FORMATO JSON OBLIGATORIO:
       "taxable": true,
       "igv_amount": "0.00",
       "total_line": "0.00",
-      "line_type": "EXPENSE_OR_ASSET|PRIOR_BALANCE|ADVANCE_PAYMENT|LATE_FEE|ROUNDING",
       "account_code": "",
       "account_name": "",
       "cost_center": "",
@@ -417,7 +319,7 @@ FORMATO JSON OBLIGATORIO:
       "cost_center": "",
       "debit": "0.00",
       "credit": "0.00",
-      "line_type": "EXPENSE_OR_ASSET|TAX|PAYABLE|ROUNDING|PRIOR_BALANCE|ADVANCE_PAYMENT|LATE_FEE|WITHHOLDING|DETRACTION|PERCEPTION",
+      "line_type": "EXPENSE_OR_ASSET|TAX|PAYABLE|ROUNDING|WITHHOLDING|DETRACTION|PERCEPTION",
       "tax_treatment": "",
       "audit_note": ""
     }}
@@ -451,21 +353,9 @@ def _normalize_ai_response(data: dict[str, Any]) -> dict[str, Any]:
     warnings = list(data.get("warnings") or [])
     audit = dict(data.get("audit_metadata") or {})
     accounting_warnings = list(audit.get("accounting_warnings") or [])
-    tax_warnings = list(audit.get("tax_warnings") or [])
-    legal_warnings = list(audit.get("legal_warnings") or [])
-    ocr_warnings = list(audit.get("ocr_warnings") or [])
     reconciliation_notes = list(audit.get("reconciliation_notes") or [])
 
     supplier_name = _norm_text(data.get("supplier_name"))
-    supplier_ruc = _only_digits(data.get("supplier_ruc"))
-    if supplier_ruc and not _is_valid_ruc(supplier_ruc):
-        warnings.append(f"RUC proveedor descartado por no ser RUC valido de 11 digitos: {supplier_ruc}.")
-        supplier_ruc = ""
-    if not supplier_name:
-        warnings.append("No se pudo leer razon social del proveedor con seguridad.")
-    if not supplier_ruc:
-        warnings.append("No se pudo leer RUC del proveedor con seguridad; no se debe inventar.")
-
     fallback_cc = _norm_upper(data.get("cost_center")) or CENTRO_COSTO_DEFAULT
 
     items = []
@@ -473,27 +363,13 @@ def _normalize_ai_response(data: dict[str, Any]) -> dict[str, Any]:
     for raw in raw_items:
         description = _norm_text(raw.get("description"))
         local = _classify_local(description, supplier_name, fallback_cc)
-        kind = _norm_text(raw.get("line_type")) or local.get("line_type") or _line_kind(description, raw.get("code", ""))
 
-        account_code = _only_digits(raw.get("account_code")) or local["account_code"]
+        account_code = _norm_text(raw.get("account_code")) or local["account_code"]
         account_name = _norm_text(raw.get("account_name")) or local["account_name"]
         cost_center = _norm_upper(raw.get("cost_center")) or local["cost_center"] or fallback_cc
-
         line_subtotal = _money(raw.get("line_subtotal") or raw.get("subtotal") or raw.get("unit_price"))
         total_line = _money(raw.get("total_line") or line_subtotal)
         igv_amount = _money(raw.get("igv_amount"))
-
-        if kind in {"ROUNDING", "PRIOR_BALANCE", "ADVANCE_PAYMENT", "LATE_FEE"}:
-            account_code = local["account_code"]
-            account_name = local["account_name"]
-            cost_center = local["cost_center"]
-            igv_amount = Decimal("0.00")
-            raw["taxable"] = False
-            raw["igv_credit"] = local["igv_credit"]
-            raw["requires_support"] = local["requires_support"]
-
-        if kind == "ROUNDING" and abs(line_subtotal) <= AUTO_ROUNDING_TOLERANCE:
-            raw["requires_support"] = False
 
         item = {
             "code": _norm_text(raw.get("code")),
@@ -505,7 +381,6 @@ def _normalize_ai_response(data: dict[str, Any]) -> dict[str, Any]:
             "taxable": bool(raw.get("taxable", True)),
             "igv_amount": _money_str(igv_amount),
             "total_line": _money_str(total_line),
-            "line_type": kind if kind != "NORMAL" else "EXPENSE_OR_ASSET",
             "account_code": account_code,
             "account_name": account_name,
             "cost_center": cost_center,
@@ -514,14 +389,14 @@ def _normalize_ai_response(data: dict[str, Any]) -> dict[str, Any]:
             "igv_credit": _norm_text(raw.get("igv_credit")) or local["igv_credit"],
             "requires_bancarization": bool(raw.get("requires_bancarization", False)),
             "requires_detraccion_review": bool(raw.get("requires_detraccion_review", False)),
-            "requires_support": bool(raw.get("requires_support", local.get("requires_support", False))),
+            "requires_support": bool(raw.get("requires_support", False)),
             "ai_reason": _norm_text(raw.get("ai_reason")) or local["ai_reason"],
             "ai_confidence": float(raw.get("ai_confidence") or local["ai_confidence"]),
         }
         items.append(item)
 
-    subtotal = _money(data.get("subtotal") or sum(_money(item["line_subtotal"]) for item in items if item.get("line_type") == "EXPENSE_OR_ASSET"))
-    igv = _money(data.get("igv") or sum(_money(item.get("igv_amount")) for item in items))
+    subtotal = _money(data.get("subtotal") or sum(_money(item["line_subtotal"]) for item in items))
+    igv = _money(data.get("igv"))
     total_read = _money(data.get("total_read_from_document") or data.get("total") or subtotal + igv)
     total = total_read
 
@@ -537,7 +412,6 @@ def _normalize_ai_response(data: dict[str, Any]) -> dict[str, Any]:
             "taxable": True,
             "igv_amount": _money_str(igv),
             "total_line": _money_str(subtotal),
-            "line_type": "EXPENSE_OR_ASSET",
             "account_code": local["account_code"],
             "account_name": local["account_name"],
             "cost_center": local["cost_center"],
@@ -552,67 +426,35 @@ def _normalize_ai_response(data: dict[str, Any]) -> dict[str, Any]:
         })
         warnings.append("OCR no devolvio items detallados; se creo linea fallback.")
 
-    account_lines = []
-    debit_by_key: dict[tuple[str, str, str, str], Decimal] = {}
-    credit_by_key: dict[tuple[str, str, str, str], Decimal] = {}
+    expense_by_key: dict[tuple[str, str, str], Decimal] = {}
+    tax_notes = []
 
     for item in items:
         code = _norm_text(item.get("account_code")) or "659101"
-        name = _norm_text(item.get("account_name")) or f"Cuenta {code}"
         cc = _norm_upper(item.get("cost_center")) or fallback_cc
-        kind = _norm_text(item.get("line_type")) or "EXPENSE_OR_ASSET"
-        amount = _money(item.get("line_subtotal"))
+        key = (code, _norm_text(item.get("account_name")) or f"Cuenta {code}", cc)
+        expense_by_key[key] = expense_by_key.get(key, Decimal("0.00")) + _money(item.get("line_subtotal"))
+        if item.get("requires_support"):
+            tax_notes.append(f"{item.get('description')}: requiere sustento adicional.")
 
-        if kind == "ROUNDING" and abs(amount) <= AUTO_ROUNDING_TOLERANCE:
-            pass
-        elif kind == "ROUNDING":
-            accounting_warnings.append(f"Redondeo superior a tolerancia automatica: {amount}. Revisar OCR o comprobante.")
-
-        if kind == "ADVANCE_PAYMENT":
-            # Si el comprobante muestra abono o saldo a favor como importe positivo, reduce el payable con credito de cuenta puente.
-            key = (code, name, "-", kind)
-            credit_by_key[key] = credit_by_key.get(key, Decimal("0.00")) + abs(amount)
-            continue
-
-        # Deuda anterior, gasto actual, mora y redondeo que incrementa total se reconocen al debe.
-        target_cc = cc if code[:1] in {"6", "9"} else "-"
-        key = (code, name, target_cc, kind)
-        debit_by_key[key] = debit_by_key.get(key, Decimal("0.00")) + amount
-
-        if item.get("requires_support") and kind not in {"ROUNDING", "PRIOR_BALANCE", "ADVANCE_PAYMENT"}:
-            tax_warnings.append(f"{item.get('description')}: requiere sustento adicional.")
-
-    for (code, name, cc, kind), amount in debit_by_key.items():
+    account_lines = []
+    for (code, name, cc), amount in expense_by_key.items():
         if amount == 0:
             continue
         account_lines.append({
             "account_code": code,
             "account_name": name,
-            "cost_center": cc,
+            "cost_center": cc if code[:1] in {"6", "9"} else "-",
             "debit": _money_str(amount),
             "credit": "0.00",
-            "line_type": kind if kind in {"ROUNDING", "PRIOR_BALANCE", "LATE_FEE"} else "EXPENSE_OR_ASSET",
-            "tax_treatment": "Clasificado por IA con validacion contable, tributaria y documental.",
-            "audit_note": "",
-        })
-
-    for (code, name, cc, kind), amount in credit_by_key.items():
-        if amount == 0:
-            continue
-        account_lines.append({
-            "account_code": code,
-            "account_name": name,
-            "cost_center": cc,
-            "debit": "0.00",
-            "credit": _money_str(amount),
-            "line_type": kind,
-            "tax_treatment": "Abono, pago a cuenta o saldo a favor. No genera IGV ni gasto nuevo.",
+            "line_type": "EXPENSE_OR_ASSET",
+            "tax_treatment": "Gasto/activo clasificado por IA con validacion tributaria.",
             "audit_note": "",
         })
 
     if igv != 0:
         account_lines.append({
-            "account_code": IGV_CREDIT_ACCOUNT,
+            "account_code": "40111",
             "account_name": "IGV credito fiscal",
             "cost_center": "-",
             "debit": _money_str(igv),
@@ -622,10 +464,9 @@ def _normalize_ai_response(data: dict[str, Any]) -> dict[str, Any]:
             "audit_note": "",
         })
 
-    debit_before_reconcile = sum(_money(line["debit"]) for line in account_lines)
-    credit_before_reconcile = sum(_money(line["credit"]) for line in account_lines)
+    debit_before_rounding = sum(_money(line["debit"]) for line in account_lines)
     expected_credit = total_read
-    difference = (expected_credit + credit_before_reconcile - debit_before_reconcile).quantize(Decimal("0.01"))
+    difference = (expected_credit - debit_before_rounding).quantize(Decimal("0.01"))
 
     if difference != 0:
         if difference > 0:
@@ -636,7 +477,7 @@ def _normalize_ai_response(data: dict[str, Any]) -> dict[str, Any]:
                 "debit": _money_str(difference),
                 "credit": "0.00",
                 "line_type": "ROUNDING",
-                "tax_treatment": "Ajuste para reconciliar contra total impreso; no integra base IGV. Revisar si excede tolerancia.",
+                "tax_treatment": "Ajuste menor para reconciliar contra total impreso; requiere revision si no es redondeo.",
                 "audit_note": "El total del documento manda; se agrego ajuste al debe.",
             })
         else:
@@ -647,15 +488,15 @@ def _normalize_ai_response(data: dict[str, Any]) -> dict[str, Any]:
                 "debit": "0.00",
                 "credit": _money_str(abs(difference)),
                 "line_type": "ROUNDING",
-                "tax_treatment": "Ajuste favorable para reconciliar contra total impreso; no integra base IGV. Revisar si excede tolerancia.",
+                "tax_treatment": "Ajuste menor para reconciliar contra total impreso; requiere revision si no es redondeo.",
                 "audit_note": "El total del documento manda; se agrego ajuste al haber.",
             })
-        reconciliation_notes.append(f"Ajuste automatico contra total impreso: {difference}.")
-        if abs(difference) > AUTO_ROUNDING_TOLERANCE:
-            accounting_warnings.append(f"Diferencia mayor a tolerancia de redondeo ({AUTO_ROUNDING_TOLERANCE}): {difference}. Revisar OCR/importes.")
+        reconciliation_notes.append(f"Ajuste automatico por diferencia contra total impreso: {difference}.")
+        if abs(difference) > Decimal("0.10"):
+            accounting_warnings.append(f"Diferencia mayor a redondeo normal: {difference}. Revisar OCR/importes.")
 
     account_lines.append({
-        "account_code": PAYABLE_ACCOUNT,
+        "account_code": "4212",
         "account_name": "Cuentas por pagar comerciales",
         "cost_center": "-",
         "debit": "0.00",
@@ -672,7 +513,7 @@ def _normalize_ai_response(data: dict[str, Any]) -> dict[str, Any]:
     if reconciliation_difference != 0:
         accounting_warnings.append(f"Asiento no cuadrado despues de reconciliacion: {reconciliation_difference}.")
 
-    requires_review = bool(accounting_warnings or [w for w in warnings if "No se pudo leer" in w])
+    requires_review = bool(accounting_warnings or warnings)
     reconciliation_status = "OK" if reconciliation_difference == 0 and not requires_review else "REQUIRES_REVIEW"
 
     accounts_to_upsert = []
@@ -698,7 +539,7 @@ def _normalize_ai_response(data: dict[str, Any]) -> dict[str, Any]:
         "issue_date": _norm_text(data.get("issue_date")),
         "due_date": _norm_text(data.get("due_date")),
         "period": _norm_text(data.get("period")),
-        "supplier_ruc": supplier_ruc,
+        "supplier_ruc": _norm_text(data.get("supplier_ruc")),
         "supplier_name": supplier_name,
         "currency": _norm_text(data.get("currency")) or "PEN",
         "subtotal": _money_str(subtotal),
@@ -720,9 +561,9 @@ def _normalize_ai_response(data: dict[str, Any]) -> dict[str, Any]:
         "warnings": warnings,
         "audit_metadata": {
             "document_quality": audit.get("document_quality") or "MEDIUM",
-            "ocr_warnings": ocr_warnings,
-            "tax_warnings": tax_warnings,
-            "legal_warnings": legal_warnings,
+            "ocr_warnings": list(audit.get("ocr_warnings") or []),
+            "tax_warnings": list(audit.get("tax_warnings") or []) + tax_notes,
+            "legal_warnings": list(audit.get("legal_warnings") or []),
             "accounting_warnings": accounting_warnings,
             "reconciliation_notes": reconciliation_notes,
             "requires_human_review": requires_review,
@@ -775,7 +616,7 @@ Usa criterio contable, tributario, legal-documentario y auditoria.
                 },
             ],
             generation_config={
-                "temperature": 0.02,
+                "temperature": 0.05,
                 "response_mime_type": "application/json",
             },
         )
