@@ -250,29 +250,6 @@ async def post_journal(payload: JournalPostRequest, request: Request, ctx=Depend
         raise HTTPException(status_code=403, detail="Tenant mismatch")
 
     data = payload.model_dump()
-
-    # Compatibilidad CONTA_PRO:
-    # El frontend inteligente de compras envía `items`, `account_lines`,
-    # `accounts_to_upsert` y `cost_centers_to_upsert`.
-    # El servicio contable histórico normalmente trabaja con `line_items`,
-    # `expense_account` y `cost_center`. Esta normalización evita perder
-    # la distribución por cuenta/centro de costo antes de llegar al servicio.
-    if data.get("items") and not data.get("line_items"):
-        data["line_items"] = data["items"]
-
-    account_lines = data.get("account_lines") or []
-    first_expense_line = next(
-        (
-            line for line in account_lines
-            if str(line.get("line_type", "")).upper() in {"EXPENSE_OR_ASSET", "EXPENSE", "ASSET"}
-            and line.get("account_code")
-        ),
-        None,
-    )
-    if first_expense_line:
-        data["expense_account"] = first_expense_line.get("account_code") or data.get("expense_account")
-        data["cost_center"] = first_expense_line.get("cost_center") or data.get("cost_center")
-
     data["trace_id"] = ctx["trace_id"]
     data["user_id"] = ctx["user_id"]
     data["ip_address"] = request.client.host if request.client else None

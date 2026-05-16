@@ -1,8 +1,10 @@
+
+
 import React, { useMemo, useRef, useState } from 'react';
 import { Button, Field, Input, MessageBar, MessageBarBody, Text } from '@fluentui/react-components';
 import { Search24Regular } from '@fluentui/react-icons';
 
-export type PurchaseFormData = {
+type PurchaseFormData = {
   serie: string;
   number: string;
   supplierRuc: string;
@@ -26,7 +28,6 @@ type PurchaseItem = {
   taxTreatment: string;
   aiReason: string;
   aiConfidence: number;
-  requiresReview: boolean;
 };
 
 type GuideForm = {
@@ -50,66 +51,11 @@ type GuideForm = {
 
 type RucValidationState = 'idle' | 'validating' | 'valid' | 'invalid' | 'unknown';
 
-export type PurchaseSubmitPayload = {
-  form: PurchaseFormData;
-  supplierName: string;
-  issueDate: string;
-  subtotal: string;
-  igv: string;
-  total: string;
-  items: Array<{
-    code: string;
-    description: string;
-    unit: string;
-    quantity: string;
-    unitPrice: string;
-    lineSubtotal: string;
-    accountCode: string;
-    accountName: string;
-    costCenter: string;
-    taxTreatment: string;
-    aiReason: string;
-    aiConfidence: number;
-    requiresReview: boolean;
-  }>;
-  accountLines: Array<{
-    accountCode: string;
-    accountName: string;
-    costCenter: string;
-    debit: string;
-    credit: string;
-    lineType: 'EXPENSE_OR_ASSET' | 'TAX' | 'PAYABLE';
-    taxTreatment: string;
-  }>;
-  accountsToUpsert: Array<{
-    accountCode: string;
-    accountName: string;
-    accountClass: string;
-    nature: 'DEBIT' | 'CREDIT';
-    taxTreatment: string;
-    requiresReview: boolean;
-  }>;
-  costCentersToUpsert: Array<{
-    code: string;
-    name: string;
-    source: 'PURCHASE_FORM' | 'GEMINI' | 'MANUAL';
-  }>;
-  auditMetadata: {
-    source: 'MANUAL' | 'GEMINI';
-    selectedFileName: string;
-    aiWarnings: string[];
-    modifyReason: string;
-    modifyDetail: string;
-    engineVersion: string;
-  };
-};
-
 type PurchaseFormEnterpriseProps = {
   form: PurchaseFormData;
   onFormChange: (next: PurchaseFormData) => void;
-  tenantId?: string;
   onClose: () => void;
-  onSubmit: (payload: PurchaseSubmitPayload) => Promise<void> | void;
+  onSubmit: () => Promise<void> | void;
 };
 
 type GeminiPurchaseItem = {
@@ -144,7 +90,6 @@ type GeminiPurchaseResponse = {
 
 const API_BASE = '/api/v1';
 const DEFAULT_COST_CENTER = 'LIM-ADM';
-const ENGINE_VERSION = 'CONTA_PRO_PURCHASE_AI_RULES_PE_2026_01';
 
 const toNumber = (value: string | number | undefined | null) => {
   const parsed = Number.parseFloat(String(value ?? '0').replace(',', '.'));
@@ -168,67 +113,41 @@ const normalizeDate = (value?: string) => {
   return `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
 };
 
-const normalizeAccount = (value: string) => String(value || '').replace(/\D/g, '').slice(0, 10);
-
-const accountClassName = (accountCode: string) => {
-  const first = normalizeAccount(accountCode).charAt(0);
-  if (first === '1') return 'Activo';
-  if (first === '2') return 'Pasivo';
-  if (first === '3') return 'Patrimonio';
-  if (first === '4') return 'Tributos y aportes';
-  if (first === '5') return 'Patrimonio / resultados acumulados';
-  if (first === '6') return 'Gastos por naturaleza';
-  if (first === '7') return 'Ingresos';
-  if (first === '8') return 'Saldos intermediarios de gestión';
-  if (first === '9') return 'Contabilidad analítica';
-  return 'Cuenta por clasificar';
-};
-
-const accountNature = (accountCode: string): 'DEBIT' | 'CREDIT' => {
-  const first = normalizeAccount(accountCode).charAt(0);
-  return ['2', '3', '4', '5', '7'].includes(first) ? 'CREDIT' : 'DEBIT';
-};
-
-const normalizeCostCenter = (value?: string) => {
-  const clean = String(value || DEFAULT_COST_CENTER).trim().toUpperCase().replace(/\s+/g, '-');
-  return clean || DEFAULT_COST_CENTER;
-};
-
 const classifyPurchaseItem = (description: string, providerName = '') => {
   const text = `${description} ${providerName}`.toUpperCase();
 
   if (/AGUA|ALCANTARILLADO|SEDAPAL|LUZ|ELECTRICIDAD|ENEL|LUZ DEL SUR|ENERGIA|GAS|INTERNET|TELEFON|CARGO FIJO/.test(text)) {
-    return { accountCode: '636101', accountName: 'Servicios básicos', taxTreatment: 'IGV crédito fiscal si cumple causalidad, comprobante válido, fehaciencia y anotación oportuna', aiConfidence: 0.95, aiReason: 'Servicio básico identificado por proveedor/descripción.', requiresReview: false };
+    return { accountCode: '636101', accountName: 'Servicios básicos', taxTreatment: 'IGV crédito fiscal si cumple causalidad, comprobante válido y anotación oportuna', aiConfidence: 0.95, aiReason: 'Servicio básico identificado por proveedor/descripción.' };
   }
   if (/ASESORIA|CONSULTORIA|CONSULTOR|SERVICIO PROFESIONAL|HONORARIO|AUDITORIA|LEGAL|CONTABLE/.test(text)) {
-    return { accountCode: '632101', accountName: 'Asesoría y consultoría', taxTreatment: 'Gasto deducible sujeto a causalidad, sustento, fehaciencia y bancarización si corresponde', aiConfidence: 0.91, aiReason: 'Servicio profesional o consultoría.', requiresReview: false };
+    return { accountCode: '632101', accountName: 'Asesoría y consultoría', taxTreatment: 'Gasto deducible sujeto a causalidad, sustento y bancarización si corresponde', aiConfidence: 0.91, aiReason: 'Servicio profesional o consultoría.' };
   }
   if (/FLETE|TRANSPORTE|DELIVERY|COURIER|MOVILIDAD|TRASLADO|CARGA|ENVIO/.test(text)) {
-    return { accountCode: '624101', accountName: 'Transportes y fletes', taxTreatment: 'Evaluar detracción si corresponde al servicio de transporte', aiConfidence: 0.9, aiReason: 'Gasto de transporte/flete.', requiresReview: false };
+    return { accountCode: '624101', accountName: 'Transportes y fletes', taxTreatment: 'Evaluar detracción si corresponde al servicio de transporte', aiConfidence: 0.9, aiReason: 'Gasto de transporte/flete.' };
   }
   if (/MANTENIMIENTO|REPARACION|SOPORTE|TECNICO|SERVICIO TECNICO/.test(text)) {
-    return { accountCode: '634101', accountName: 'Mantenimiento y reparaciones', taxTreatment: 'Gasto deducible si está vinculado a bienes del negocio y existe sustento', aiConfidence: 0.88, aiReason: 'Mantenimiento o reparación.', requiresReview: false };
+    return { accountCode: '634101', accountName: 'Mantenimiento y reparaciones', taxTreatment: 'Gasto deducible si está vinculado a bienes del negocio', aiConfidence: 0.88, aiReason: 'Mantenimiento o reparación.' };
   }
   if (/UTILES|SUMINISTRO|MATERIAL|LIMPIEZA|OFICINA|PAPEL|TONER|TINTA/.test(text)) {
-    return { accountCode: '656101', accountName: 'Suministros diversos', taxTreatment: 'Gasto operativo deducible si cumple causalidad y sustento', aiConfidence: 0.87, aiReason: 'Suministros de operación/oficina.', requiresReview: false };
+    return { accountCode: '656101', accountName: 'Suministros diversos', taxTreatment: 'Gasto operativo deducible si cumple causalidad', aiConfidence: 0.87, aiReason: 'Suministros de operación/oficina.' };
   }
   if (/PUBLICIDAD|MARKETING|ANUNCIO|CAMPAÑA|DISEÑO|REDES/.test(text)) {
-    return { accountCode: '637101', accountName: 'Publicidad y marketing', taxTreatment: 'Deducible si acredita necesidad comercial, contrato/orden y sustento documental', aiConfidence: 0.88, aiReason: 'Publicidad o marketing.', requiresReview: false };
+    return { accountCode: '637101', accountName: 'Publicidad y marketing', taxTreatment: 'Deducible si acredita necesidad comercial y sustento documental', aiConfidence: 0.88, aiReason: 'Publicidad o marketing.' };
   }
   if (/ALQUILER|ARRENDAMIENTO|RENTA|LOCAL|OFICINA/.test(text)) {
-    return { accountCode: '635101', accountName: 'Alquileres', taxTreatment: 'Revisar detracción, contrato y bancarización según corresponda', aiConfidence: 0.9, aiReason: 'Alquiler/arrendamiento.', requiresReview: false };
+    return { accountCode: '635101', accountName: 'Alquileres', taxTreatment: 'Revisar detracción y contrato según corresponda', aiConfidence: 0.9, aiReason: 'Alquiler/arrendamiento.' };
   }
   if (/LAPTOP|COMPUTADORA|IMPRESORA|MAQUINA|EQUIPO|MOBILIARIO|ACTIVO|VEHICULO/.test(text)) {
-    return { accountCode: '336101', accountName: 'Activo fijo - equipos diversos', taxTreatment: 'No enviar directo a gasto; activar y depreciar si supera política de capitalización', aiConfidence: 0.82, aiReason: 'Posible activo fijo. Requiere revisión de capitalización.', requiresReview: true };
+    return { accountCode: '336101', accountName: 'Activo fijo - equipos diversos', taxTreatment: 'No enviar directo a gasto; activar y depreciar si supera política de capitalización', aiConfidence: 0.82, aiReason: 'Posible activo fijo. Requiere revisión.' };
   }
   if (/MERCADERIA|PRODUCTO PARA VENTA|INVENTARIO|STOCK/.test(text)) {
-    return { accountCode: '601101', accountName: 'Compras de mercaderías', taxTreatment: 'Afecta inventario/kardex y costo de ventas según política', aiConfidence: 0.86, aiReason: 'Mercadería/inventario.', requiresReview: false };
+    return { accountCode: '601101', accountName: 'Compras de mercaderías', taxTreatment: 'Afecta inventario/kardex y costo de ventas según política', aiConfidence: 0.86, aiReason: 'Mercadería/inventario.' };
   }
 
-  return { accountCode: '659101', accountName: 'Otros gastos de gestión', taxTreatment: 'Requiere revisión contable antes de postear', aiConfidence: 0.55, aiReason: 'No se identificó una regla confiable.', requiresReview: true };
+  return { accountCode: '659101', accountName: 'Otros gastos de gestión', taxTreatment: 'Requiere revisión contable antes de postear', aiConfidence: 0.55, aiReason: 'No se identificó una regla confiable.' };
 };
 
-const createItem = (costCenter = DEFAULT_COST_CENTER): PurchaseItem => ({
+const createItem = (): PurchaseItem => ({
   id: newId(),
   code: '',
   description: '',
@@ -238,14 +157,13 @@ const createItem = (costCenter = DEFAULT_COST_CENTER): PurchaseItem => ({
   lineSubtotal: '0.00',
   accountCode: '',
   accountName: '',
-  costCenter: normalizeCostCenter(costCenter),
+  costCenter: DEFAULT_COST_CENTER,
   taxTreatment: '',
   aiReason: '',
   aiConfidence: 0,
-  requiresReview: true,
 });
 
-export const PurchaseFormEnterprise = ({ form, onFormChange, tenantId, onClose, onSubmit }: PurchaseFormEnterpriseProps) => {
+export const PurchaseFormEnterprise = ({ form, onFormChange, onClose, onSubmit }: PurchaseFormEnterpriseProps) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [items, setItems] = useState<PurchaseItem[]>([]);
   const [supplierName, setSupplierName] = useState('');
@@ -288,87 +206,20 @@ export const PurchaseFormEnterprise = ({ form, onFormChange, tenantId, onClose, 
   const total = subtotal + igv;
 
   const groupedLines = useMemo(() => {
-    const map = new Map<string, { accountCode: string; accountName: string; costCenter: string; amount: number; taxTreatment: string }>();
+    const map = new Map<string, { accountCode: string; accountName: string; costCenter: string; amount: number }>();
     items.forEach((item) => {
       if (!item.accountCode) return;
-      const costCenter = normalizeCostCenter(item.costCenter || form.costCenter);
-      const key = `${normalizeAccount(item.accountCode)}|${costCenter}`;
+      const key = `${item.accountCode}|${item.costCenter}`;
       const current = map.get(key);
       if (current) current.amount += toNumber(item.lineSubtotal);
-      else map.set(key, {
-        accountCode: normalizeAccount(item.accountCode),
-        accountName: item.accountName,
-        costCenter,
-        amount: toNumber(item.lineSubtotal),
-        taxTreatment: item.taxTreatment,
-      });
+      else map.set(key, { accountCode: item.accountCode, accountName: item.accountName, costCenter: item.costCenter || DEFAULT_COST_CENTER, amount: toNumber(item.lineSubtotal) });
     });
     return Array.from(map.values());
-  }, [items, form.costCenter]);
-
-  const accountsToUpsert = useMemo(() => {
-    const map = new Map<string, PurchaseSubmitPayload['accountsToUpsert'][number]>();
-    groupedLines.forEach((line) => {
-      if (!line.accountCode) return;
-      map.set(line.accountCode, {
-        accountCode: line.accountCode,
-        accountName: line.accountName || 'Cuenta por clasificar',
-        accountClass: accountClassName(line.accountCode),
-        nature: accountNature(line.accountCode),
-        taxTreatment: line.taxTreatment,
-        requiresReview: line.accountCode === '659101',
-      });
-    });
-    map.set('40111', {
-      accountCode: '40111',
-      accountName: 'IGV crédito fiscal',
-      accountClass: accountClassName('40111'),
-      nature: 'DEBIT',
-      taxTreatment: 'Crédito fiscal condicionado a comprobante válido, fehaciencia, causalidad y anotación oportuna',
-      requiresReview: false,
-    });
-    map.set('4212', {
-      accountCode: '4212',
-      accountName: 'Cuentas por pagar comerciales',
-      accountClass: accountClassName('4212'),
-      nature: 'CREDIT',
-      taxTreatment: 'Obligación comercial por comprobante pendiente de pago',
-      requiresReview: false,
-    });
-    return Array.from(map.values());
-  }, [groupedLines]);
-
-  const costCentersToUpsert = useMemo(() => {
-    const codes = new Set<string>();
-    items.forEach((item) => codes.add(normalizeCostCenter(item.costCenter || form.costCenter)));
-    if (codes.size === 0) codes.add(normalizeCostCenter(form.costCenter));
-    return Array.from(codes).map((code) => ({ code, name: code, source: 'PURCHASE_FORM' as const }));
-  }, [items, form.costCenter]);
+  }, [items]);
 
   const updateField = (key: keyof PurchaseFormData, value: string) => {
     const next = { ...form, [key]: value };
-
-    if (key === 'subtotal' && isAutoIgv) {
-      next.igv = money(toNumber(value) * 0.18);
-    }
-
-    if (key === 'costCenter') {
-      const previousGeneralCostCenter = normalizeCostCenter(form.costCenter);
-      const nextCostCenter = normalizeCostCenter(value);
-
-      setItems((prev) =>
-        prev.map((item) => {
-          const itemCostCenter = normalizeCostCenter(item.costCenter);
-          const shouldUpdate =
-            !item.costCenter ||
-            itemCostCenter === DEFAULT_COST_CENTER ||
-            itemCostCenter === previousGeneralCostCenter;
-
-          return shouldUpdate ? { ...item, costCenter: nextCostCenter } : item;
-        }),
-      );
-    }
-
+    if (key === 'subtotal' && isAutoIgv) next.igv = money(toNumber(value) * 0.18);
     onFormChange(next);
   };
 
@@ -382,14 +233,6 @@ export const PurchaseFormEnterprise = ({ form, onFormChange, tenantId, onClose, 
           next.lineSubtotal = money(toNumber(next.quantity) * toNumber(next.unitPrice));
         }
 
-        if (key === 'accountCode') {
-          next.accountCode = normalizeAccount(value);
-        }
-
-        if (key === 'costCenter') {
-          next.costCenter = normalizeCostCenter(value);
-        }
-
         if (key === 'description') {
           const c = classifyPurchaseItem(value, supplierName);
           next.accountCode = c.accountCode;
@@ -397,8 +240,7 @@ export const PurchaseFormEnterprise = ({ form, onFormChange, tenantId, onClose, 
           next.taxTreatment = c.taxTreatment;
           next.aiReason = c.aiReason;
           next.aiConfidence = c.aiConfidence;
-          next.requiresReview = c.requiresReview;
-          next.costCenter = normalizeCostCenter(form.costCenter || next.costCenter || DEFAULT_COST_CENTER);
+          next.costCenter = form.costCenter || next.costCenter || DEFAULT_COST_CENTER;
         }
 
         return next;
@@ -406,7 +248,7 @@ export const PurchaseFormEnterprise = ({ form, onFormChange, tenantId, onClose, 
     );
   };
 
-  const addItem = () => setItems((prev) => [...prev, createItem(form.costCenter)]);
+  const addItem = () => setItems((prev) => [...prev, createItem()]);
   const removeItem = (id: string) => setItems((prev) => prev.filter((item) => item.id !== id));
 
   const applyGeminiPayload = (payload: GeminiPurchaseResponse) => {
@@ -414,7 +256,7 @@ export const PurchaseFormEnterprise = ({ form, onFormChange, tenantId, onClose, 
     const nextNumber = payload.number || form.number || '';
     const nextSupplierRuc = payload.supplier_ruc || form.supplierRuc || '';
     const nextSupplierName = payload.supplier_name || supplierName || '';
-    const nextCostCenter = normalizeCostCenter(payload.cost_center || form.costCenter || DEFAULT_COST_CENTER);
+    const nextCostCenter = payload.cost_center || form.costCenter || DEFAULT_COST_CENTER;
 
     const mappedItems = (payload.items || []).map((raw) => {
       const description = String(raw.description || '');
@@ -422,8 +264,6 @@ export const PurchaseFormEnterprise = ({ form, onFormChange, tenantId, onClose, 
       const qty = toNumber(raw.quantity || 1);
       const unitPrice = toNumber(raw.unit_price || 0);
       const lineSubtotal = toNumber(raw.line_subtotal || qty * unitPrice);
-      const accountCode = normalizeAccount(String(raw.account_code || fallback.accountCode));
-      const aiConfidence = Number(raw.ai_confidence ?? fallback.aiConfidence);
 
       return {
         id: newId(),
@@ -433,13 +273,12 @@ export const PurchaseFormEnterprise = ({ form, onFormChange, tenantId, onClose, 
         quantity: money(qty),
         unitPrice: money(unitPrice),
         lineSubtotal: money(lineSubtotal),
-        accountCode,
+        accountCode: String(raw.account_code || fallback.accountCode),
         accountName: String(raw.account_name || fallback.accountName),
-        costCenter: normalizeCostCenter(raw.cost_center || nextCostCenter),
+        costCenter: String(raw.cost_center || nextCostCenter),
         taxTreatment: String(raw.tax_treatment || fallback.taxTreatment),
         aiReason: String(raw.ai_reason || fallback.aiReason),
-        aiConfidence,
-        requiresReview: Boolean(fallback.requiresReview || aiConfidence < 0.8 || accountCode === '659101'),
+        aiConfidence: Number(raw.ai_confidence ?? fallback.aiConfidence),
       };
     });
 
@@ -455,7 +294,7 @@ export const PurchaseFormEnterprise = ({ form, onFormChange, tenantId, onClose, 
       supplierRuc: nextSupplierRuc,
       subtotal: money(toNumber(payload.subtotal ?? mappedItems.reduce((a, i) => a + toNumber(i.lineSubtotal), 0))),
       igv: money(toNumber(payload.igv ?? toNumber(payload.subtotal) * 0.18)),
-      expenseAccount: normalizeAccount(String(payload.expense_account || mappedItems[0]?.accountCode || form.expenseAccount || '659101')),
+      expenseAccount: payload.expense_account || mappedItems[0]?.accountCode || form.expenseAccount || '659101',
       costCenter: nextCostCenter,
     });
 
@@ -469,7 +308,7 @@ export const PurchaseFormEnterprise = ({ form, onFormChange, tenantId, onClose, 
     setAiWarnings([]);
 
     try {
-      const currentTenantId = tenantId || localStorage.getItem('tenant_id') || '11111111-1111-1111-1111-111111111111'
+     const tenantId = localStorage.getItem('tenant_id') || 'tenant-demo';
 
       const tokenResponse = await fetch(`${API_BASE}/auth/dev-token`, {
         method: 'POST',
@@ -477,7 +316,7 @@ export const PurchaseFormEnterprise = ({ form, onFormChange, tenantId, onClose, 
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          tenant_id: currentTenantId,
+          tenant_id: tenantId,
           user_id: 'erp.operator',
           role: 'ADMIN',
         }),
@@ -496,7 +335,7 @@ export const PurchaseFormEnterprise = ({ form, onFormChange, tenantId, onClose, 
         method: 'POST',
         headers: {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          'X-Tenant-Id': currentTenantId,
+          'X-Tenant-Id': tenantId,
         },
         body: formData,
       });
@@ -559,9 +398,9 @@ export const PurchaseFormEnterprise = ({ form, onFormChange, tenantId, onClose, 
     if (subtotal <= 0) return 'Subtotal inválido.';
     for (const item of items) {
       if (!item.description.trim()) return 'Hay un item sin descripción.';
-      if (!normalizeAccount(item.accountCode)) return `Item ${item.description}: falta cuenta contable.`;
-      if (!normalizeCostCenter(item.costCenter)) return `Item ${item.description}: falta centro de costo.`;
-      if (item.requiresReview && !modifyDetail.trim()) return `Item ${item.description}: requiere revisión contable. Usa Modificar y registra sustento.`;
+      if (!item.accountCode.trim()) return `Item ${item.description}: falta cuenta contable.`;
+      if (!item.costCenter.trim()) return `Item ${item.description}: falta centro de costo.`;
+      if (item.aiConfidence < 0.8) return `Item ${item.description}: requiere revisión contable.`;
     }
     return '';
   };
@@ -587,100 +426,24 @@ export const PurchaseFormEnterprise = ({ form, onFormChange, tenantId, onClose, 
     }
 
     const firstLine = groupedLines[0];
-    const nextForm: PurchaseFormData = {
+    onFormChange({
       ...form,
       subtotal: money(subtotal),
       igv: money(igv),
-      expenseAccount: firstLine?.accountCode || normalizeAccount(form.expenseAccount) || '659101',
-      costCenter: firstLine?.costCenter || normalizeCostCenter(form.costCenter),
-    };
+      expenseAccount: firstLine?.accountCode || form.expenseAccount || '659101',
+      costCenter: form.costCenter || DEFAULT_COST_CENTER,
+    });
 
-    const normalizedItems = items.map((item) => ({
-      code: item.code,
-      description: item.description,
-      unit: item.unit,
-      quantity: item.quantity,
-      unitPrice: item.unitPrice,
-      lineSubtotal: item.lineSubtotal,
-      accountCode: normalizeAccount(item.accountCode),
-      accountName: item.accountName,
-      costCenter: normalizeCostCenter(item.costCenter || nextForm.costCenter),
-      taxTreatment: item.taxTreatment,
-      aiReason: item.aiReason,
-      aiConfidence: item.aiConfidence,
-      requiresReview: item.requiresReview,
-    }));
-
-    const submitPayload: PurchaseSubmitPayload = {
-      form: nextForm,
-      supplierName,
-      issueDate,
-      subtotal: money(subtotal),
-      igv: money(igv),
-      total: money(total),
-      items: normalizedItems,
-      accountLines: [
-        ...groupedLines.map((line) => ({
-          accountCode: line.accountCode,
-          accountName: line.accountName,
-          costCenter: normalizeCostCenter(line.costCenter),
-          debit: money(line.amount),
-          credit: '0.00',
-          lineType: 'EXPENSE_OR_ASSET' as const,
-          taxTreatment: line.taxTreatment,
-        })),
-        {
-          accountCode: '40111',
-          accountName: 'IGV crédito fiscal',
-          costCenter: '-',
-          debit: money(igv),
-          credit: '0.00',
-          lineType: 'TAX' as const,
-          taxTreatment: 'Crédito fiscal condicionado a comprobante válido, causalidad, fehaciencia y anotación oportuna',
-        },
-        {
-          accountCode: '4212',
-          accountName: 'Cuentas por pagar comerciales',
-          costCenter: '-',
-          debit: '0.00',
-          credit: money(total),
-          lineType: 'PAYABLE' as const,
-          taxTreatment: 'Obligación comercial por comprobante de compra',
-        },
-      ],
-      accountsToUpsert,
-      costCentersToUpsert,
-      auditMetadata: {
-        source: selectedFileName ? 'GEMINI' : 'MANUAL',
-        selectedFileName,
-        aiWarnings,
-        modifyReason,
-        modifyDetail,
-        engineVersion: ENGINE_VERSION,
-      },
-    };
-
-    onFormChange(nextForm);
     setIsPosting(true);
-
-      try {
-    await onSubmit(submitPayload);
-
-    setStatus(
-      'Compra posteada. Se actualizó registro de compras, centro de costos y asiento contable.'
-    );
-
-    // NO limpiar todavía hasta confirmar que todo funciona bien
-    // clearFormLabels();
-  } catch (error) {
-    setStatus(
-      `No se pudo guardar la compra. ${
-        error instanceof Error ? error.message : 'Error desconocido'
-      }`
-    );
-  } finally {
-    setIsPosting(false);
-  }
+    try {
+      await onSubmit();
+      setStatus('Compra posteada. Se debe actualizar registro de compras, plan contable, centro de costos e informes.');
+      clearFormLabels();
+    } catch {
+      setStatus('No se pudo guardar la compra. Revisar backend/payload.');
+    } finally {
+      setIsPosting(false);
+    }
   };
 
   return (
@@ -841,4 +604,4 @@ export const PurchaseFormEnterprise = ({ form, onFormChange, tenantId, onClose, 
   );
 };
 
-export default PurchaseFormEnterprise;
+export default PurchaseFormEnterprise;  

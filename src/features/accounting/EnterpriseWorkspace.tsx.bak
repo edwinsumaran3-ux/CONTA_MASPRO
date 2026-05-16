@@ -91,7 +91,7 @@ const USER_ID = 'erp.operator';
 const MAX_JOURNAL_ROWS = 3000;
 const MAX_RENDER_ROWS = 1200;
 
-const getTenantId = () => localStorage.getItem('tenant_id') || '11111111-1111-1111-1111-111111111111';
+const getTenantId = () => localStorage.getItem('tenant_id') || '11111111-1111-1111-1111-111111111111'
 
 const seedRows: JournalRow[] = [
   { id: 'JE-2026-000184', date: '2026-05-10', period: '2026-05', description: 'Venta F001-8421 cliente enterprise', account: '1212', costCenter: 'LIM-COM', debit: '18,880.00', credit: '0.00', status: 'SUNAT', hash: '9b82c5f0f6e4142a', sourceModule: 'VENTAS' },
@@ -302,115 +302,84 @@ export const EnterpriseWorkspace = () => {
   }, []);
 
    
-  const postPurchase = async (purchasePayload?: PurchaseSubmitPayload) => {
+  const postPurchase = async (purchasePayload: PurchaseSubmitPayload) => {
     const tenantId = getTenantId();
 
-    try {
-      const formSource = purchasePayload?.form ?? purchaseForm;
-      const subtotal = toNumber(purchasePayload?.subtotal ?? formSource.subtotal);
-      const igv = toNumber(purchasePayload?.igv ?? formSource.igv);
-      const total = toNumber(purchasePayload?.total ?? subtotal + igv);
-
-      const items = purchasePayload?.items ?? [];
-      const accountLines = purchasePayload?.accountLines ?? [];
-      const accountsToUpsert = purchasePayload?.accountsToUpsert ?? [];
-      const costCentersToUpsert = purchasePayload?.costCentersToUpsert ?? [];
-      const auditMetadata = purchasePayload?.auditMetadata ?? {
-        source: 'MANUAL',
-        selectedFileName: '',
-        aiWarnings: [],
-        modifyReason: '',
-        modifyDetail: '',
-        engineVersion: 'CONTA_PRO_PURCHASE_FALLBACK',
-      };
-
-      const payload = {
+    const tokenResponse = await fetch(`${API_BASE}/auth/dev-token`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
         tenant_id: tenantId,
-        year: 2026,
-        month: 5,
-        purchase_id: `${formSource.serie}-${formSource.number}`,
-        supplier_ruc: formSource.supplierRuc,
-        supplier_name: purchasePayload?.supplierName ?? '',
-        issue_date: purchasePayload?.issueDate || new Date().toISOString().slice(0, 10),
-        doc_type: '01',
-        serie: formSource.serie,
-        number: formSource.number,
-        subtotal,
-        igv,
-        total,
-        currency: 'PEN',
-        expense_account: formSource.expenseAccount || accountLines[0]?.accountCode || '659101',
-        cost_center: formSource.costCenter || accountLines[0]?.costCenter || 'LIM-ADM',
+        user_id: USER_ID,
+        role: 'ADMIN',
+      }),
+    });
 
-        items: items.map((item) => ({
-          code: item.code,
-          description: item.description,
-          unit: item.unit,
-          quantity: toNumber(item.quantity),
-          unit_price: toNumber(item.unitPrice),
-          line_subtotal: toNumber(item.lineSubtotal),
-          account_code: item.accountCode,
-          account_name: item.accountName,
-          cost_center: item.costCenter,
-          tax_treatment: item.taxTreatment,
-          ai_reason: item.aiReason,
-          ai_confidence: item.aiConfidence,
-        })),
+    if (!tokenResponse.ok) {
+      throw new Error(await tokenResponse.text());
+    }
 
-        line_items: items.map((item) => ({
-          product_code: item.code,
-          description: item.description,
-          unit: item.unit,
-          quantity: toNumber(item.quantity),
-          unit_price: toNumber(item.unitPrice),
-          line_subtotal: toNumber(item.lineSubtotal),
-          account_code: item.accountCode,
-          account_name: item.accountName,
-          cost_center: item.costCenter,
-          tax_treatment: item.taxTreatment,
-        })),
+    const tokenPayload = await tokenResponse.json();
+    const purchaseToken = tokenPayload.access_token;
 
-        account_lines: accountLines.map((line) => ({
-          account_code: line.accountCode,
-          account_name: line.accountName,
-          cost_center: line.costCenter,
-          debit: toNumber(line.debit),
-          credit: toNumber(line.credit),
-          line_type: line.lineType,
-          tax_treatment: line.taxTreatment,
-        })),
+    if (!purchaseToken) {
+      setStatusMessage('No hay token de seguridad para registrar compra.');
+      return;
+    }
 
-        accounts_to_upsert: accountsToUpsert,
-        cost_centers_to_upsert: costCentersToUpsert,
-        audit_metadata: auditMetadata,
-      };
+    const formSource = purchasePayload.form;
+    const subtotal = toNumber(purchasePayload.subtotal);
+    const igv = toNumber(purchasePayload.igv);
+    const total = toNumber(purchasePayload.total);
 
-      console.log('CONTA_PRO purchasePayload:', purchasePayload);
-      console.log('CONTA_PRO purchase-invoice payload:', payload);
+    const payload = {
+      tenant_id: tenantId,
+      year: 2026,
+      month: 5,
+      purchase_id: `${formSource.serie}-${formSource.number}`,
+      supplier_ruc: formSource.supplierRuc,
+      supplier_name: purchasePayload.supplierName,
+      issue_date: purchasePayload.issueDate,
+      doc_type: '01',
+      serie: formSource.serie,
+      number: formSource.number,
+      subtotal,
+      igv,
+      total,
+      currency: 'PEN',
+      expense_account: formSource.expenseAccount,
+      cost_center: formSource.costCenter,
+      items: purchasePayload.items.map((item) => ({
+        code: item.code,
+        description: item.description,
+        unit: item.unit,
+        quantity: toNumber(item.quantity),
+        unit_price: toNumber(item.unitPrice),
+        line_subtotal: toNumber(item.lineSubtotal),
+        account_code: item.accountCode,
+        account_name: item.accountName,
+        cost_center: item.costCenter,
+        tax_treatment: item.taxTreatment,
+        ai_reason: item.aiReason,
+        ai_confidence: item.aiConfidence,
+      })),
+      account_lines: purchasePayload.accountLines.map((line) => ({
+        account_code: line.accountCode,
+        account_name: line.accountName,
+        cost_center: line.costCenter,
+        debit: toNumber(line.debit),
+        credit: toNumber(line.credit),
+        line_type: line.lineType,
+        tax_treatment: line.taxTreatment,
+      })),
+      accounts_to_upsert: purchasePayload.accountsToUpsert,
+      cost_centers_to_upsert: purchasePayload.costCentersToUpsert,
+      audit_metadata: purchasePayload.auditMetadata,
+    };
 
-      const tokenResponse = await fetch(`${API_BASE}/auth/dev-token`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          tenant_id: tenantId,
-          user_id: USER_ID,
-          role: 'ADMIN',
-        }),
-      });
-
-      if (!tokenResponse.ok) {
-        throw new Error(await tokenResponse.text());
-      }
-
-      const tokenPayload = await tokenResponse.json();
-      const purchaseToken = tokenPayload.access_token;
-
-      if (!purchaseToken) {
-        throw new Error('No hay token de seguridad para registrar compra.');
-      }
-
+    try {
       const response = await fetch(`${API_BASE}/ledger/purchase-invoice`, {
         method: 'POST',
         headers: authHeaders(purchaseToken, tenantId),
@@ -418,19 +387,14 @@ export const EnterpriseWorkspace = () => {
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Error purchase-invoice:', errorText);
-        throw new Error(errorText);
+        throw new Error(await response.text());
       }
 
       setStatusMessage(`Compra ${formSource.serie}-${formSource.number} posteada con cuentas y centros de costo.`);
       setActivePanel(null);
-      setToken(purchaseToken);
       await loadJournal(purchaseToken);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Error desconocido al postear compra.';
-      console.error('CONTA_PRO postPurchase error:', error);
-      setStatusMessage(`No se pudo postear compra. ${message}`);
+      setStatusMessage(`No se pudo postear compra. ${error instanceof Error ? error.message : ''}`);
       throw error;
     }
   };

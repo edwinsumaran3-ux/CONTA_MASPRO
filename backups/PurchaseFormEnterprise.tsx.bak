@@ -663,24 +663,15 @@ export const PurchaseFormEnterprise = ({ form, onFormChange, tenantId, onClose, 
     onFormChange(nextForm);
     setIsPosting(true);
 
-      try {
-    await onSubmit(submitPayload);
-
-    setStatus(
-      'Compra posteada. Se actualizó registro de compras, centro de costos y asiento contable.'
-    );
-
-    // NO limpiar todavía hasta confirmar que todo funciona bien
-    // clearFormLabels();
-  } catch (error) {
-    setStatus(
-      `No se pudo guardar la compra. ${
-        error instanceof Error ? error.message : 'Error desconocido'
-      }`
-    );
-  } finally {
-    setIsPosting(false);
-  }
+    try {
+      await onSubmit(submitPayload);
+      setStatus('Compra posteada. Se enviaron detalle, centros de costo y plan contable al backend.');
+      clearFormLabels();
+    } catch {
+      setStatus('No se pudo guardar la compra. Revisar backend/payload.');
+    } finally {
+      setIsPosting(false);
+    }
   };
 
   return (

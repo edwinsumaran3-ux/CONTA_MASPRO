@@ -1,43 +1,14 @@
 from __future__ import annotations
 
-from datetime import date, datetime, datetime
+from datetime import date
 from decimal import Decimal
-from uuid import UUID, uuid4
+from uuid import uuid4
 from src.application.services.expert_accounting_guard import ExpertAccountingGuard
 from src.application.services.sunat_realtime_verifier import SunatRealtimeVerifier
 from src.config import settings
 from src.domain.exceptions import PeriodLockedException, TenantRequiredException, UnbalancedEntryException
 from src.domain.models.accounting import AuditLog, FinancialDocument, JournalEntry, JournalLine, OutboxEvent
 from src.infrastructure.repositories.ledger_repository import LedgerRepository
-
-
-SYSTEM_USER_UUID = "00000000-0000-0000-0000-000000000001"
-
-
-def _json_safe(value):
-    if isinstance(value, Decimal):
-        return str(value)
-    if isinstance(value, (date, datetime)):
-        return value.isoformat()
-    if isinstance(value, UUID):
-        return str(value)
-    if isinstance(value, dict):
-        return {str(k): _json_safe(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_json_safe(v) for v in value]
-    if isinstance(value, tuple):
-        return [_json_safe(v) for v in value]
-    return value
-
-
-def _safe_uuid(value) -> str:
-    if not value:
-        return SYSTEM_USER_UUID
-    try:
-        return str(UUID(str(value)))
-    except Exception:
-        return SYSTEM_USER_UUID
-
 
 class LedgerPostingService:
     def __init__(self, uow_factory, hash_service):
@@ -117,7 +88,7 @@ class LedgerPostingService:
                 total_credit=total_credit,
                 previous_hash=previous_hash,
                 row_hash="PENDING",
-                created_by=_safe_uuid(payload.get("user_id")),
+                created_by=payload["user_id"],
             )
             for line in lines:
                 line.entry_id = entry.id
@@ -125,9 +96,7 @@ class LedgerPostingService:
             entry.row_hash = self.hash_service.generate(entry, lines, previous_hash)
             await repo.add_entry(entry, lines)
             if payload.get("financial_document"):
-                document_payload = dict(payload["financial_document"])
-                if "metadata_json" in document_payload:
-                    document_payload["metadata_json"] = _json_safe(document_payload["metadata_json"])
+                document_payload = payload["financial_document"]
                 document = FinancialDocument(
                     tenant_id=tenant_id,
                     company_id=company_id,
@@ -148,7 +117,7 @@ class LedgerPostingService:
                     "source_module": entry.source_module,
                     "total": str(total_debit),
                 },
-                actor_user_id=_safe_uuid(payload.get("user_id")),
+                actor_user_id=payload["user_id"],
                 ip_address=payload.get("ip_address"),
                 user_agent=payload.get("user_agent"),
             ))
@@ -159,7 +128,7 @@ class LedgerPostingService:
                     topic=event["topic"],
                     aggregate_type=event.get("aggregate_type", "JournalEntry"),
                     aggregate_id=str(entry.id),
-                    payload=_json_safe(event.get("payload", {"journal_entry_id": str(entry.id), "trace_id": payload["trace_id"]})),
+                    payload=event.get("payload", {"journal_entry_id": str(entry.id), "trace_id": payload["trace_id"]}),
                     status="PENDING",
                     attempts=0,
                     max_attempts=event.get("max_attempts", 3),
@@ -360,7 +329,7 @@ class LedgerPostingService:
                 total_credit=total_credit,
                 previous_hash=previous_hash,
                 row_hash="PENDING",
-                created_by=_safe_uuid(invoice_data.get("user_id")),
+                created_by=invoice_data["user_id"],
             )
             for line in lines:
                 line.entry_id = entry.id
@@ -388,23 +357,23 @@ class LedgerPostingService:
                 journal_entry_id=entry.id,
                 sunat_status="PENDING",
                 xml_hash=invoice_data.get("xml_hash"),
-                metadata_json=_json_safe({
+                metadata_json={
                     "customer_ruc": invoice_data.get("customer_ruc"),
                     "ubl_version": "2.1",
                     "xml_ready": bool(invoice_data.get("xml_raw")),
                     "line_items": invoice_data.get("line_items", []),
-                }),
+                },
             )
             await repo.add_financial_document(document)
             await repo.add_audit(AuditLog(
                 tenant_id=tenant_id, trace_id=invoice_data["trace_id"], entity_type="JournalEntry",
                 entity_id=str(entry.id), action="CREATE_POSTED", before_state=None,
                 after_state={"entry_id": str(entry.id), "row_hash": entry.row_hash, "total": str(total_debit)},
-                actor_user_id=_safe_uuid(invoice_data.get("user_id")), ip_address=invoice_data.get("ip_address"), user_agent=invoice_data.get("user_agent")
+                actor_user_id=invoice_data["user_id"], ip_address=invoice_data.get("ip_address"), user_agent=invoice_data.get("user_agent")
             ))
             await repo.add_outbox(OutboxEvent(
                 tenant_id=tenant_id, topic="sunat.invoice.post", aggregate_type="JournalEntry", aggregate_id=str(entry.id),
-                payload=_json_safe({"invoice": invoice_data, "journal_entry_id": str(entry.id), "financial_document_id": str(document.id), "trace_id": invoice_data["trace_id"]}),
+                payload={"invoice": invoice_data, "journal_entry_id": str(entry.id), "financial_document_id": str(document.id), "trace_id": invoice_data["trace_id"]},
                 status="PENDING", attempts=0, max_attempts=3
             ))
             await uow.commit()
