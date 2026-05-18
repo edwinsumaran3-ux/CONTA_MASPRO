@@ -1,6 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 
-type Movement = {
+export type AccountingMovement = {
   id: string;
   date: string;
   period: string;
@@ -16,77 +16,30 @@ type Movement = {
   risk: 'BAJO' | 'MEDIO' | 'ALTO';
 };
 
-const movements: Movement[] = [
-  {
-    id: 'JE-2026-000184',
-    date: '2026-05-01',
-    period: '2026-05',
-    glosa: 'Compra S106-24119152-49 SEDALIB S.A.',
-    account: '636101',
-    accountName: 'Servicios básicos',
-    costCenter: 'LIM-ADM',
-    debit: 54.96,
-    credit: 0,
-    module: 'COMPRAS',
-    status: 'POSTEADO',
-    hash: '9b8a25ff6a4142a',
-    risk: 'BAJO',
-  },
-  {
-    id: 'JE-2026-000184-2',
-    date: '2026-05-01',
-    period: '2026-05',
-    glosa: 'IGV crédito fiscal compra SEDALIB',
-    account: '40111',
-    accountName: 'IGV crédito fiscal',
-    costCenter: '-',
-    debit: 9.89,
-    credit: 0,
-    module: 'COMPRAS',
-    status: 'SUNAT',
-    hash: '9b8a25ff6a4142a',
-    risk: 'BAJO',
-  },
-  {
-    id: 'JE-2026-000184-3',
-    date: '2026-05-01',
-    period: '2026-05',
-    glosa: 'Cuenta por pagar SEDALIB S.A.',
-    account: '4212',
-    accountName: 'Cuentas por pagar comerciales',
-    costCenter: '-',
-    debit: 0,
-    credit: 64.85,
-    module: 'COMPRAS',
-    status: 'POSTEADO',
-    hash: '9b8a25ff6a4142a',
-    risk: 'BAJO',
-  },
-  {
-    id: 'JE-2026-000185',
-    date: '2026-05-10',
-    period: '2026-05',
-    glosa: 'Venta F001-8422 cliente corporativo',
-    account: '1212',
-    accountName: 'Cuentas por cobrar comerciales',
-    costCenter: 'LIM-COM',
-    debit: 18880,
-    credit: 0,
-    module: 'VENTAS',
-    status: 'SUNAT',
-    hash: '8b2c3f6e4412a',
-    risk: 'BAJO',
-  },
-];
+type AccountingLivePanelProps = {
+  movements?: AccountingMovement[];
+  loading?: boolean;
+  selectedMovementId?: string;
+  statusMessage?: string;
+  aiMessage?: string;
+  onRefresh?: () => void;
+  onExportCsv?: () => void;
+  onRunAudit?: () => void;
+  onSelectMovement?: (movement: AccountingMovement) => void;
+};
 
 const plan = [
-  { code: '10', name: 'Efectivo y equivalentes', type: 'Activo' },
-  { code: '12', name: 'Cuentas por cobrar comerciales', type: 'Activo' },
-  { code: '40', name: 'Tributos, contraprestaciones y aportes', type: 'Tributario' },
-  { code: '42', name: 'Cuentas por pagar comerciales', type: 'Pasivo' },
-  { code: '60', name: 'Compras', type: 'Costo' },
-  { code: '63', name: 'Servicios prestados por terceros', type: 'Gasto' },
-  { code: '70', name: 'Ventas', type: 'Ingreso' },
+  { code: '10', name: 'Efectivo y equivalentes', type: 'Activo', prefixes: ['10'] },
+  { code: '12', name: 'Cuentas por cobrar comerciales', type: 'Activo', prefixes: ['12'] },
+  { code: '40', name: 'Tributos, contraprestaciones y aportes', type: 'Tributario', prefixes: ['40'] },
+  { code: '41', name: 'Remuneraciones por pagar', type: 'Pasivo', prefixes: ['41'], modules: ['PAYROLL', 'PLANILLAS'] },
+  { code: '42', name: 'Cuentas por pagar comerciales', type: 'Pasivo', prefixes: ['42'] },
+  { code: '60', name: 'Compras registradas', type: 'Modulo compras', prefixes: ['60'], modules: ['PURCHASING', 'COMPRAS'] },
+  { code: '62', name: 'Gastos de personal', type: 'Planillas', prefixes: ['62'], modules: ['PAYROLL', 'PLANILLAS'] },
+  { code: '63', name: 'Servicios prestados por terceros', type: 'Gasto', prefixes: ['63'] },
+  { code: '67', name: 'Gastos financieros', type: 'Gasto', prefixes: ['67'] },
+  { code: '68', name: 'Valorizacion y deterioro', type: 'Gasto', prefixes: ['68'] },
+  { code: '70', name: 'Ventas', type: 'Ingreso', prefixes: ['70'], modules: ['BILLING', 'VENTAS', 'SALES_IA'] },
 ];
 
 const money = (value: number) =>
@@ -95,30 +48,81 @@ const money = (value: number) =>
     maximumFractionDigits: 2,
   })}`;
 
-export default function AccountingLivePanel() {
-  const [selectedAccount, setSelectedAccount] = useState('63');
+export default function AccountingLivePanel({
+  movements = [],
+  loading = false,
+  selectedMovementId,
+  statusMessage = '',
+  aiMessage = '',
+  onRefresh,
+  onExportCsv,
+  onRunAudit,
+  onSelectMovement,
+}: AccountingLivePanelProps) {
+  const [selectedAccount, setSelectedAccount] = useState('');
+  const [selectedId, setSelectedId] = useState<string | null>(selectedMovementId ?? null);
   const [search, setSearch] = useState('');
+
+  const accountTotals = useMemo(() => {
+    const result = new Map<string, { count: number; debit: number; credit: number }>();
+    for (const account of plan) {
+      result.set(account.code, { count: 0, debit: 0, credit: 0 });
+    }
+    for (const movement of movements) {
+      for (const parent of plan) {
+        const byPrefix = parent.prefixes.some((prefix) => movement.account.startsWith(prefix));
+        const byModule = parent.modules?.some((module) => movement.module.toUpperCase() === module);
+        if (!byPrefix && !byModule) continue;
+        const total = result.get(parent.code) ?? { count: 0, debit: 0, credit: 0 };
+        total.count += 1;
+        total.debit += movement.debit;
+        total.credit += movement.credit;
+        result.set(parent.code, total);
+      }
+    }
+    return result;
+  }, [movements]);
 
   const filtered = useMemo(() => {
     return movements.filter((m) => {
-      const byAccount = selectedAccount ? m.account.startsWith(selectedAccount) : true;
+      const account = plan.find((item) => item.code === selectedAccount);
+      const byAccount = account
+        ? account.prefixes.some((prefix) => m.account.startsWith(prefix))
+          || account.modules?.some((module) => m.module.toUpperCase() === module)
+        : true;
       const bySearch = `${m.glosa} ${m.account} ${m.accountName} ${m.module} ${m.hash}`
         .toLowerCase()
         .includes(search.toLowerCase());
       return byAccount && bySearch;
     });
-  }, [selectedAccount, search]);
+  }, [movements, selectedAccount, search]);
 
-  const selected = filtered[0];
+  useEffect(() => {
+    if (selectedMovementId) {
+      setSelectedId(selectedMovementId);
+    }
+  }, [selectedMovementId]);
+
+  useEffect(() => {
+    if (!filtered.length) {
+      setSelectedId(null);
+      return;
+    }
+    if (!selectedId || !filtered.some((item) => item.id === selectedId)) {
+      setSelectedId(filtered[0].id);
+    }
+  }, [filtered, selectedId]);
+
+  const selected = filtered.find((item) => item.id === selectedId) ?? filtered[0];
   const debe = filtered.reduce((a, b) => a + b.debit, 0);
   const haber = filtered.reduce((a, b) => a + b.credit, 0);
 
   return (
-    <section className="sap-card" style={{ marginTop: 18 }}>
+    <section className="sap-card" style={{ marginTop: 0, minHeight: '100%', display: 'flex', flexDirection: 'column' }}>
       <div className="sap-card-head">
         <div>
           <h3>Plan Contable Vivo | Libro Diario y Mayor Analítico</h3>
-          <p>Click en una cuenta para ver movimientos, comportamiento, riesgo, hash y recomendación IA.</p>
+          <p>{statusMessage || 'Datos reales del Libro Diario conectados al Mayor Analítico.'}</p>
         </div>
 
         <div className="sap-actions">
@@ -128,15 +132,29 @@ export default function AccountingLivePanel() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
-          <button className="sap-btn">Excel</button>
-          <button className="sap-btn">PDF</button>
-          <button className="sap-btn blue">Auditoría IA</button>
+          <button className="sap-btn" type="button" onClick={onRefresh}>Actualizar</button>
+          <button className="sap-btn" type="button" onClick={onExportCsv}>CSV</button>
+          <button className="sap-btn blue" type="button" onClick={onRunAudit}>Auditoría IA</button>
         </div>
       </div>
 
-      <div className="sap-live-grid">
+      <div className="sap-live-grid" style={{ flex: 1, minHeight: 0 }}>
         <aside className="sap-plan-list">
+          <button
+            type="button"
+            className={`sap-account ${selectedAccount === '' ? 'active' : ''}`}
+            onClick={() => setSelectedAccount('')}
+          >
+            <span>∑</span>
+            <div>
+              <strong>Todas las cuentas</strong>
+              <small>{movements.length} movimientos</small>
+            </div>
+          </button>
           {plan.map((account) => (
+            (() => {
+              const total = accountTotals.get(account.code) ?? { count: 0, debit: 0, credit: 0 };
+              return (
             <button
               key={account.code}
               type="button"
@@ -146,9 +164,11 @@ export default function AccountingLivePanel() {
               <span>{account.code}</span>
               <div>
                 <strong>{account.name}</strong>
-                <small>{account.type}</small>
+                <small>{account.type} · {total.count} mov. · {money(total.debit - total.credit)}</small>
               </div>
             </button>
+              );
+            })()
           ))}
         </aside>
 
@@ -170,15 +190,28 @@ export default function AccountingLivePanel() {
             </thead>
 
             <tbody>
-              {filtered.length === 0 ? (
+              {loading && movements.length === 0 ? (
                 <tr>
                   <td colSpan={10} style={{ textAlign: 'center', padding: 24 }}>
-                    Sin movimientos para la cuenta seleccionada.
+                    Cargando Libro Diario desde la API...
+                  </td>
+                </tr>
+              ) : filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={10} style={{ textAlign: 'center', padding: 24 }}>
+                    Sin movimientos reales para la cuenta o búsqueda seleccionada.
                   </td>
                 </tr>
               ) : (
                 filtered.map((row) => (
-                  <tr key={row.id}>
+                  <tr
+                    key={row.id}
+                    onClick={() => {
+                      setSelectedId(row.id);
+                      onSelectMovement?.(row);
+                    }}
+                    style={selected?.id === row.id ? { outline: '2px solid #2563eb', outlineOffset: '-2px' } : undefined}
+                  >
                     <td>{row.date}</td>
                     <td>{row.period}</td>
                     <td>{row.glosa}</td>
@@ -233,14 +266,14 @@ export default function AccountingLivePanel() {
 
               <h4>Recomendación IA</h4>
               <ul>
-                <li>Confirmar causalidad del gasto.</li>
-                <li>Validar centro de costo asignado.</li>
-                <li>Revisar detracción si aplica al servicio.</li>
-                <li>Verificar que el asiento esté respaldado por XML/PDF.</li>
+                <li>{selected.risk === 'ALTO' ? 'Priorizar revisión del asiento y su cuadre.' : 'Movimiento sin alerta crítica visible.'}</li>
+                <li>Validar centro de costo asignado cuando aplique clase 6 o 9.</li>
+                <li>Verificar respaldo XML/PDF y trazabilidad del hash.</li>
+                <li>{aiMessage || 'Ejecuta Auditoría IA para ampliar recomendaciones.'}</li>
               </ul>
             </>
           ) : (
-            <p>Selecciona una cuenta con movimientos.</p>
+            <p>Selecciona una cuenta con movimientos reales del Libro Diario.</p>
           )}
         </aside>
       </div>

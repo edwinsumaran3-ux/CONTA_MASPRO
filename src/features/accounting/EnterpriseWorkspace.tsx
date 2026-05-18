@@ -37,6 +37,7 @@ import { OwnerDashboard } from '../client-portal/OwnerDashboard';
 import { InventoryDashboard } from '../inventory/InventoryDashboard';
 import { PeriodCloseAction } from './PeriodCloseAction';
 import DashboardEnterprise from '../../components/DashboardEnterprise';
+import AccountingLivePanel, { type AccountingMovement } from '../../components/AccountingLivePanel';
 import AccountDetailPanel from '../../components/AccountDetailPanel';
 import { LedgerAnalytic } from './LedgerAnalytic';
 
@@ -504,6 +505,35 @@ export const EnterpriseWorkspace = () => {
     if (!selectedRow) return undefined;
     return entriesIndex.get(selectedRow.entryId ?? selectedRow.id);
   }, [selectedRow, entriesIndex]);
+
+  const accountingMovements = useMemo<AccountingMovement[]>(() => {
+    return rows.map((row) => {
+      const summary = entriesIndex.get(row.entryId ?? row.id);
+      const missingCostCenter = requiresCostCenter(row.account) && isCostCenterEmpty(row.costCenter);
+      const risk: AccountingMovement['risk'] =
+        summary?.validatorStatus === 'DESCUADRADO' || missingCostCenter
+          ? 'ALTO'
+          : row.status === 'REVIEW'
+            ? 'MEDIO'
+            : 'BAJO';
+
+      return {
+        id: row.id,
+        date: row.date,
+        period: row.period,
+        glosa: row.description,
+        account: row.account,
+        accountName: row.accountName || row.account,
+        costCenter: row.costCenter,
+        debit: toNumber(row.debit),
+        credit: toNumber(row.credit),
+        module: row.sourceModule,
+        status: row.status,
+        hash: row.hash,
+        risk,
+      };
+    });
+  }, [rows, entriesIndex]);
 
   const authHeaders = (bearerToken: string, tenantId = TENANT_ID) => ({
     Authorization: `Bearer ${bearerToken}`,
@@ -1055,6 +1085,29 @@ export const EnterpriseWorkspace = () => {
     if (selectedView === 'compras') {
       return <AuditHealthDashboard />;
     }
+
+    if (selectedView === 'contabilidad') {
+      return (
+        <div style={{ height: '100%', minHeight: 0, overflow: 'hidden' }}>
+          <AccountingLivePanel
+            movements={accountingMovements}
+            loading={loading}
+            selectedMovementId={selectedRow.id}
+            statusMessage={statusMessage}
+            aiMessage={aiMessage}
+            onRefresh={() => void refreshJournal()}
+            onExportCsv={exportExcel}
+            onRunAudit={() => void runAi('anomalies')}
+            onSelectMovement={(movement) => {
+              const row = rows.find((item) => item.id === movement.id);
+              if (row) {
+                setSelectedRow(row);
+              }
+            }}
+          />
+        </div>
+      );
+    }
     
     if (selectedView === 'contabilidad') {
         return (
@@ -1401,6 +1454,7 @@ export const EnterpriseWorkspace = () => {
         </aside>
 
         <main className="workspace-main">
+          {selectedView !== 'contabilidad' && (
           <div className="command-bar">
             <div className="command-group">
               <button className="btn-fluent-primary" type="button" onClick={() => setActivePanel('VENTA')}>
@@ -1449,9 +1503,11 @@ export const EnterpriseWorkspace = () => {
               <ArrowClockwise24Regular />
             </button>
           </div>
+          )}
 
-          <div className="status-strip">{statusMessage}</div>
+          {selectedView !== 'contabilidad' && <div className="status-strip">{statusMessage}</div>}
 
+          {selectedView !== 'contabilidad' && (
           <section className="metric-strip">
             {metricCards.map(([label, value]) => (
               <article key={label} className="metric-card">
@@ -1460,11 +1516,13 @@ export const EnterpriseWorkspace = () => {
               </article>
             ))}
           </section>
+          )}
 
           <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             {renderPrimaryView()}
           </div>
 
+          {selectedView !== 'contabilidad' && (
           <footer className="assistant-bar">
             <div className="assistant-title">
               <Bot24Regular />
@@ -1481,6 +1539,7 @@ export const EnterpriseWorkspace = () => {
               )}
             </div>
           </footer>
+          )}
         </main>
       </div>
 
