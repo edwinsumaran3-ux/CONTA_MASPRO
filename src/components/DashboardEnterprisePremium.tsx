@@ -58,7 +58,7 @@ export const DashboardEnterprisePremium = () => {
       }
     >
       {/* Metrics Row */}
-      <PanelsGrid columns={5} gap="md">
+      <PanelsGrid columns={4} gap="md">
         <MetricCard title="Caja" value="S/ 482,900" color="blue" trend="+2.4%" />
         <MetricCard title="Cuentas por Cobrar" value="S/ 1,284,320" color="green" trend="+1.6%" />
         <MetricCard title="Cuentas por Pagar" value="S/ 712,008" color="red" trend="-0.8%" />

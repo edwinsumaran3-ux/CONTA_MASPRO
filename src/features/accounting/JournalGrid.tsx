@@ -29,7 +29,7 @@ export const JournalGrid = ({ journalEntries = [] as JournalRow[] }) => {
       row.id,
       row.entry_date,
       row.period,
-      row.description.replaceAll(',', ' '),
+      row.description.replace(',', ' '),
       row.total_debit,
       row.total_credit,
       row.row_hash,
@@ -107,3 +107,5 @@ export const JournalGrid = ({ journalEntries = [] as JournalRow[] }) => {
     </div>
   );
 };
+
+

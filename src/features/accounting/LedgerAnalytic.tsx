@@ -55,7 +55,7 @@ export const LedgerAnalytic = ({ accountCode, entries = seedEntries }: LedgerAna
       ...rowsWithBalance.map((entry) => [
         entry.date,
         entry.voucher,
-        entry.glosa.replaceAll(',', ' '),
+        entry.glosa.replace(',', ' '),
         entry.debe.toFixed(2),
         entry.haber.toFixed(2),
         entry.saldo.toFixed(2),
@@ -123,3 +123,5 @@ export const LedgerAnalytic = ({ accountCode, entries = seedEntries }: LedgerAna
     </div>
   );
 };
+
+

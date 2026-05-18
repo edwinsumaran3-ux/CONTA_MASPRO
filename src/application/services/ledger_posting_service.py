@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
@@ -9,8 +10,19 @@ from src.config import settings
 from src.domain.exceptions import PeriodLockedException, TenantRequiredException, UnbalancedEntryException
 from src.domain.models.accounting import AuditLog, FinancialDocument, JournalEntry, JournalLine, OutboxEvent
 from sqlalchemy import and_, select
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import selectinload
 from src.infrastructure.repositories.ledger_repository import LedgerRepository
+
+logger = logging.getLogger(__name__)
+
+
+def _masked_database_url() -> str:
+    try:
+        return make_url(settings.database_url).render_as_string(hide_password=True)
+    except Exception:
+        return settings.database_url
+
 
 class LedgerPostingService:
     def __init__(self, uow_factory, hash_service):
@@ -555,11 +567,13 @@ class LedgerPostingService:
             percepcion = Decimal(str(invoice_data.get("percepcion_amount", "0.00")))
             retencion = Decimal(str(invoice_data.get("retencion_amount", "0.00")))
             company_id = invoice_data.get("company_id")
+            revenue_account = self._normalize_code(invoice_data.get("revenue_account"), "7011")
+            revenue_account_name = "Prestacion de servicios" if revenue_account.startswith("704") else "Ventas"
 
             lines = [
                 JournalLine(id=uuid4(), tenant_id=tenant_id, company_id=company_id, account_code="1212", account_name="Cuentas por cobrar comerciales", debit=total + percepcion - retencion - detraccion, credit=Decimal("0.00"), partner_ruc=invoice_data.get("customer_ruc"), document_type=invoice_data.get("doc_type"), document_series=invoice_data.get("serie"), document_number=invoice_data.get("number"), cost_center=invoice_data.get("cost_center")),
                 JournalLine(id=uuid4(), tenant_id=tenant_id, company_id=company_id, account_code="4011", account_name="IGV por pagar", debit=Decimal("0.00"), credit=igv, partner_ruc=invoice_data.get("customer_ruc"), document_type=invoice_data.get("doc_type"), document_series=invoice_data.get("serie"), document_number=invoice_data.get("number"), cost_center=invoice_data.get("cost_center")),
-                JournalLine(id=uuid4(), tenant_id=tenant_id, company_id=company_id, account_code="7011", account_name="Ventas", debit=Decimal("0.00"), credit=subtotal, partner_ruc=invoice_data.get("customer_ruc"), document_type=invoice_data.get("doc_type"), document_series=invoice_data.get("serie"), document_number=invoice_data.get("number"), cost_center=invoice_data.get("cost_center")),
+                JournalLine(id=uuid4(), tenant_id=tenant_id, company_id=company_id, account_code=revenue_account, account_name=revenue_account_name, debit=Decimal("0.00"), credit=subtotal, partner_ruc=invoice_data.get("customer_ruc"), document_type=invoice_data.get("doc_type"), document_series=invoice_data.get("serie"), document_number=invoice_data.get("number"), cost_center=invoice_data.get("cost_center")),
             ]
             if detraccion:
                 lines.append(JournalLine(id=uuid4(), tenant_id=tenant_id, company_id=company_id, account_code="1041", account_name="Banco detracciones", debit=detraccion, credit=Decimal("0.00"), partner_ruc=invoice_data.get("customer_ruc"), document_type=invoice_data.get("doc_type"), document_series=invoice_data.get("serie"), document_number=invoice_data.get("number"), cost_center=invoice_data.get("cost_center")))
@@ -642,9 +656,12 @@ class LedgerPostingService:
                 xml_hash=invoice_data.get("xml_hash"),
                 metadata_json=self._json_safe({
                     "customer_ruc": invoice_data.get("customer_ruc"),
+                    "customer_name": invoice_data.get("customer_name"),
+                    "revenue_account": revenue_account,
                     "ubl_version": "2.1",
                     "xml_ready": bool(invoice_data.get("xml_raw")),
                     "line_items": invoice_data.get("line_items", []),
+                    "audit_metadata": invoice_data.get("audit_metadata") or {},
                 }),
             )
             await repo.add_financial_document(document)
@@ -659,5 +676,22 @@ class LedgerPostingService:
                 payload=self._json_safe({"invoice": invoice_data, "journal_entry_id": str(entry.id), "financial_document_id": str(document.id), "trace_id": invoice_data["trace_id"]}),
                 status="PENDING", attempts=0, max_attempts=3
             ))
+            logger.info(
+                "CONTA_PRO sale INSERT prepared database=%s tenant_id=%s entry_id=%s document_id=%s invoice=%s-%s",
+                _masked_database_url(),
+                tenant_id,
+                entry.id,
+                document.id,
+                invoice_data.get("serie"),
+                invoice_data.get("number"),
+            )
             await uow.commit()
+            logger.info(
+                "CONTA_PRO sale COMMIT completed tenant_id=%s entry_id=%s document_id=%s invoice=%s-%s",
+                tenant_id,
+                entry.id,
+                document.id,
+                invoice_data.get("serie"),
+                invoice_data.get("number"),
+            )
             return entry

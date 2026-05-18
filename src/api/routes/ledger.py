@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from uuid import UUID, uuid4
@@ -5,7 +7,9 @@ from datetime import date
 from decimal import Decimal
 from io import BytesIO
 import base64
-from sqlalchemy import and_, select
+from sqlalchemy import and_, select, desc
+from sqlalchemy.engine import make_url
+from sqlalchemy.orm import selectinload
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.units import mm
@@ -26,6 +30,7 @@ from src.infrastructure.hash_chain import LedgerHashService
 from src.infrastructure.unit_of_work import UnitOfWork
 
 router = APIRouter(prefix="/ledger", tags=["Ledger"])
+logger = logging.getLogger(__name__)
 
 
 class DocumentModificationRequest(BaseModel):
@@ -91,6 +96,111 @@ def build_uow_factory():
 
 def build_hash_service():
     return LedgerHashService(settings.ledger_hmac_secret.encode())
+
+
+def _database_debug_info() -> dict:
+    try:
+        url = make_url(settings.database_url)
+        database_name = str(url.database or "")
+        rendered_url = url.render_as_string(hide_password=True)
+        return {
+            "database_url": rendered_url,
+            "driver": url.drivername,
+            "host": url.host,
+            "port": url.port,
+            "database": database_name,
+            "is_temporary_or_memory": database_name == ":memory:" or "mode=memory" in settings.database_url.lower(),
+        }
+    except Exception as exc:
+        return {
+            "database_url": settings.database_url,
+            "driver": "unknown",
+            "host": None,
+            "port": None,
+            "database": None,
+            "is_temporary_or_memory": ":memory:" in settings.database_url.lower(),
+            "database_url_parse_error": str(exc),
+        }
+
+
+async def _invoice_persistence_diagnostics(tenant_id: str, entry_id: UUID, payload: InvoicePostRequest) -> dict:
+    diagnostics = {
+        **_database_debug_info(),
+        "operation": "INSERT",
+        "insert_or_update_executed": True,
+        "commit_executed": True,
+        "commit_confirmed": False,
+        "tenant_id": tenant_id,
+        "posted_entry_id": str(entry_id),
+        "document": f"{payload.serie}-{payload.number}",
+    }
+
+    try:
+        async with build_uow_factory()(tenant_id) as uow:
+            entry_result = await uow.session.execute(
+                select(JournalEntry)
+                .options(selectinload(JournalEntry.lines))
+                .where(JournalEntry.tenant_id == tenant_id, JournalEntry.id == entry_id)
+            )
+            entry = entry_result.scalar_one_or_none()
+
+            document_result = await uow.session.execute(
+                select(FinancialDocument).where(
+                    and_(
+                        FinancialDocument.tenant_id == tenant_id,
+                        FinancialDocument.direction == "AR",
+                        FinancialDocument.document_type == payload.doc_type,
+                        FinancialDocument.series == payload.serie,
+                        FinancialDocument.number == payload.number,
+                    )
+                )
+            )
+            document = document_result.scalar_one_or_none()
+
+        diagnostics["commit_confirmed"] = bool(entry and document)
+        diagnostics["select_returned_rows"] = {
+            "journal_entries": 1 if entry else 0,
+            "financial_documents": 1 if document else 0,
+        }
+        diagnostics["select_after_save"] = {
+            "journal_entry": None if entry is None else {
+                "id": str(entry.id),
+                "entry_date": entry.entry_date.isoformat() if entry.entry_date else None,
+                "description": entry.description,
+                "source_module": entry.source_module,
+                "source_id": entry.source_id,
+                "total_debit": str(entry.total_debit),
+                "total_credit": str(entry.total_credit),
+                "row_hash": entry.row_hash,
+                "lines": [
+                    {
+                        "account_code": line.account_code,
+                        "account_name": line.account_name,
+                        "cost_center": line.cost_center,
+                        "debit": str(line.debit),
+                        "credit": str(line.credit),
+                        "document_series": line.document_series,
+                        "document_number": line.document_number,
+                    }
+                    for line in list(getattr(entry, "lines", []) or [])[:10]
+                ],
+            },
+            "financial_document": None if document is None else {
+                "id": str(document.id),
+                "direction": document.direction,
+                "document_type": document.document_type,
+                "series": document.series,
+                "number": document.number,
+                "issue_date": document.issue_date.isoformat() if document.issue_date else None,
+                "total_amount": str(document.total_amount),
+                "journal_entry_id": str(document.journal_entry_id) if document.journal_entry_id else None,
+            },
+        }
+    except Exception as exc:
+        diagnostics["select_after_save_error"] = str(exc)
+
+    logger.info("CONTA_PRO invoice persistence diagnostics: %s", diagnostics)
+    return diagnostics
 
 
 def _safe_user_uuid(user_id: str | None) -> str | None:
@@ -307,12 +417,14 @@ async def post_invoice(payload: InvoicePostRequest, request: Request, ctx=Depend
         entry = await service.post_invoice(data)
     except ExpertValidationException as exc:
         raise HTTPException(status_code=422, detail={"message": str(exc), "checks": exc.checks}) from exc
+    diagnostics = await _invoice_persistence_diagnostics(ctx["tenant_id"], entry.id, payload)
     return JournalEntryResponse(
         id=str(entry.id),
         row_hash=entry.row_hash,
         previous_hash=entry.previous_hash,
         total_debit=str(entry.total_debit),
         total_credit=str(entry.total_credit),
+        diagnostics=diagnostics,
     )
 
 @router.post("/purchase-invoice", response_model=JournalEntryResponse)
@@ -340,27 +452,103 @@ async def post_purchase_invoice(payload: PurchasePostRequest, request: Request, 
     )
 
 @router.get("/journal", response_model=list[JournalEntryListItem])
-async def list_journal(year: int | None = None, month: int | None = None, limit: int = 100, offset: int = 0, ctx=Depends(get_current_context)):
-    async with build_uow_factory()(ctx["tenant_id"]) as uow:
-        from src.infrastructure.repositories.ledger_repository import LedgerRepository
+async def list_journal(
+    year: int | None = None,
+    month: int | None = None,
+    limit: int = 100,
+    offset: int = 0,
+    ctx=Depends(get_current_context),
+):
+    """Libro Diario para visualizacion contable.
 
-        entries = await LedgerRepository(uow.session).list_entries_page(ctx["tenant_id"], year=year, month=month, limit=limit, offset=offset)
-    period = f"{year}-{month:02d}" if year and month else str(year or "")
-    return [
-        JournalEntryListItem(
-            id=str(entry.id),
-            entry_date=entry.entry_date.isoformat(),
-            period=period,
-            description=entry.description,
-            source_module=entry.source_module,
-            currency=entry.currency,
-            total_debit=str(entry.total_debit),
-            total_credit=str(entry.total_credit),
-            row_hash=entry.row_hash,
-            previous_hash=entry.previous_hash,
-        )
-        for entry in entries
-    ]
+    Correccion raiz:
+    - period_id es UUID, no se debe comparar con 'YYYY-MM' ni usar LIKE.
+    - El filtro de periodo se hace por JournalEntry.entry_date.
+    - El campo response.period debe ser string 'YYYY-MM', no UUID.
+    """
+    try:
+        tenant_id = ctx["tenant_id"]
+        async with build_uow_factory()(tenant_id) as uow:
+            stmt = (
+                select(JournalEntry)
+                .options(selectinload(JournalEntry.lines))
+                .where(JournalEntry.tenant_id == tenant_id)
+                .order_by(desc(JournalEntry.entry_date), desc(JournalEntry.created_at))
+                .offset(offset)
+                .limit(limit)
+            )
+
+            if year is not None and month is not None:
+                start_date = date(year, month, 1)
+                end_date = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
+                stmt = stmt.where(JournalEntry.entry_date >= start_date, JournalEntry.entry_date < end_date)
+            elif year is not None:
+                start_date = date(year, 1, 1)
+                end_date = date(year + 1, 1, 1)
+                stmt = stmt.where(JournalEntry.entry_date >= start_date, JournalEntry.entry_date < end_date)
+
+            result = await uow.session.execute(stmt)
+            entries = result.scalars().unique().all()
+
+        response: list[JournalEntryListItem] = []
+        for entry in entries:
+            lines = list(getattr(entry, "lines", []) or [])
+            first_line = lines[0] if lines else None
+            period_value = entry.entry_date.strftime("%Y-%m") if entry.entry_date else ""
+
+            response.append(
+                JournalEntryListItem(
+                    id=str(entry.id),
+                    entry_date=entry.entry_date.isoformat() if entry.entry_date else "",
+                    period=period_value,
+                    description=entry.description,
+                    source_module=entry.source_module,
+                    currency=entry.currency,
+                    total_debit=str(entry.total_debit),
+                    total_credit=str(entry.total_credit),
+                    row_hash=entry.row_hash,
+                    previous_hash=entry.previous_hash,
+                    sunat_status=getattr(entry, "status", "POSTED"),
+                    account_code=None if first_line is None else first_line.account_code,
+                    account_name=None if first_line is None else first_line.account_name,
+                    cost_center=None if first_line is None else first_line.cost_center,
+                    asiento_num=getattr(entry, "asiento_num", None),
+                    tipo_cambio=str(getattr(entry, "tipo_cambio", "1.0000")),
+                    estado_asiento=getattr(entry, "estado_asiento", "VALIDADO"),
+                    validar_status=getattr(entry, "validar_status", "OK"),
+                    tipo_asiento_id=int(getattr(entry, "tipo_asiento_id", 1) or 1),
+                    lines=[
+                        {
+                            "id": str(line.id),
+                            "linea_idx": getattr(line, "linea_idx", None),
+                            "account_code": line.account_code,
+                            "account_name": line.account_name,
+                            "cost_center": line.cost_center,
+                            "debit": str(line.debit),
+                            "credit": str(line.credit),
+                            "debe_mn": str(getattr(line, "debe_mn", line.debit) or line.debit),
+                            "haber_mn": str(getattr(line, "haber_mn", line.credit) or line.credit),
+                            "tipo_cambio": str(getattr(line, "tipo_cambio", "1.0000") or "1.0000"),
+                            "periodo_fiscal": getattr(line, "periodo_fiscal", None),
+                            "modulo_origen": getattr(line, "modulo_origen", None),
+                            "partner_ruc": line.partner_ruc,
+                            "document_type": line.document_type,
+                            "document_series": line.document_series,
+                            "document_number": line.document_number,
+                            "comp_tipo": getattr(line, "comp_tipo", None),
+                            "tercero_tipo_doc": getattr(line, "tercero_tipo_doc", None),
+                            "tercero_num": getattr(line, "tercero_num", None),
+                            "tercero_razon_social": getattr(line, "tercero_razon_social", None),
+                            "estado_asiento": getattr(line, "estado_asiento", "VALIDADO"),
+                            "validar_status": getattr(line, "validar_status", "OK"),
+                        }
+                        for line in lines
+                    ],
+                )
+            )
+        return response
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"No se pudo consultar libro diario: {exc}") from exc
 
 
 @router.get("/documents/lookup")

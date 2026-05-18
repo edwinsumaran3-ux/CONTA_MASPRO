@@ -34,13 +34,18 @@ class WorkerCreatePayload(BaseModel):
     apellidos: str
     dni: str = Field(min_length=8, max_length=8)
     fecha_nacimiento: date | None = None
+    fecha_inicio_contrato: date | None = None
+    fecha_fin_contrato: date | None = None
     direccion_domicilio: str | None = None
+    direccion_reniec: str | None = None
     telefono: str | None = None
     email: str | None = None
     profesion: str | None = None
     experiencia: str | None = None
+    estudios_realizados: str | None = None
     cargo_postulado: str
     sueldo_pactado: Decimal = Decimal("0.00")
+    pension_system: str | None = None
     habilidades_clave: list[str] = Field(default_factory=list)
     cv_metadata: dict = Field(default_factory=dict)
 
@@ -52,6 +57,8 @@ class ContractGeneratePayload(BaseModel):
     start_date: date | None = None
     end_date: date | None = None
     pension_system: str | None = None
+    requirements: list[dict] = Field(default_factory=list)
+    requirement_summary: dict = Field(default_factory=dict)
     include_annex_package: bool = True
 
 
@@ -74,6 +81,25 @@ def _safe_user_uuid(user_id: str | None) -> str | None:
         return str(UUID(user_id))
     except Exception:
         return None
+
+
+def _summarize_requirements(requirements: list[dict]) -> dict:
+    total = len(requirements)
+    approved = sum(1 for item in requirements if item.get("status") == "APROBADO")
+    observed = sum(1 for item in requirements if item.get("status") == "OBSERVADO")
+    pending = sum(1 for item in requirements if item.get("status") == "PENDIENTE")
+    required_pending = [
+        item.get("name") or item.get("id") or "Requisito"
+        for item in requirements
+        if item.get("required") and item.get("status") != "APROBADO"
+    ]
+    return {
+        "total": total,
+        "approved": approved,
+        "observed": observed,
+        "pending": pending,
+        "required_pending": required_pending,
+    }
 
 
 @router.get("/legal-library")
@@ -270,7 +296,12 @@ async def create_worker(payload: WorkerCreatePayload, ctx=Depends(require_roles(
         raise HTTPException(status_code=422, detail="DNI debe tener 8 digitos numericos")
 
     alerts = list(payload.cv_metadata.get("alerts", [])) if isinstance(payload.cv_metadata, dict) else []
-    status = "ALERT" if alerts else "READY"
+    requirements = payload.cv_metadata.get("requirements", []) if isinstance(payload.cv_metadata, dict) else []
+    required_pending = [
+        item for item in requirements
+        if isinstance(item, dict) and item.get("required") and item.get("status") != "APROBADO"
+    ]
+    status = "ALERT" if alerts or required_pending else "READY"
     async with UnitOfWork(AsyncSessionLocal, payload.tenant_id) as uow:
         worker = HrWorker(
             tenant_id=payload.tenant_id,
@@ -280,13 +311,18 @@ async def create_worker(payload: WorkerCreatePayload, ctx=Depends(require_roles(
             apellidos=payload.apellidos,
             dni=payload.dni,
             fecha_nacimiento=payload.fecha_nacimiento,
+            fecha_inicio_contrato=payload.fecha_inicio_contrato,
+            fecha_fin_contrato=payload.fecha_fin_contrato,
             direccion_domicilio=payload.direccion_domicilio,
+            direccion_reniec=payload.direccion_reniec,
             telefono=payload.telefono,
             email=payload.email,
             profesion=payload.profesion,
             experiencia=payload.experiencia,
+            estudios_realizados=payload.estudios_realizados,
             cargo_postulado=payload.cargo_postulado,
             sueldo_pactado=payload.sueldo_pactado,
+            pension_system=payload.pension_system,
             habilidades_clave=payload.habilidades_clave,
             cv_metadata=payload.cv_metadata,
             compliance_status=status,
@@ -314,10 +350,21 @@ async def list_workers(limit: int = 100, ctx=Depends(require_roles("ADMIN", "ACC
                 "nombres": row.nombres,
                 "apellidos": row.apellidos,
                 "dni": row.dni,
+                "fecha_nacimiento": row.fecha_nacimiento.isoformat() if row.fecha_nacimiento else None,
+                "fecha_inicio_contrato": row.fecha_inicio_contrato.isoformat() if row.fecha_inicio_contrato else None,
+                "fecha_fin_contrato": row.fecha_fin_contrato.isoformat() if row.fecha_fin_contrato else None,
+                "direccion_domicilio": row.direccion_domicilio,
+                "direccion_reniec": row.direccion_reniec,
                 "cargo_postulado": row.cargo_postulado,
                 "sueldo_pactado": str(row.sueldo_pactado),
                 "email": row.email,
                 "telefono": row.telefono,
+                "profesion": row.profesion,
+                "experiencia": row.experiencia,
+                "estudios_realizados": row.estudios_realizados,
+                "pension_system": row.pension_system,
+                "habilidades_clave": row.habilidades_clave,
+                "cv_metadata": row.cv_metadata,
                 "compliance_status": row.compliance_status,
                 "created_at": row.created_at.isoformat(),
             }
@@ -338,6 +385,10 @@ async def generate_contract(payload: ContractGeneratePayload, ctx=Depends(requir
         if worker is None:
             raise HTTPException(status_code=404, detail="Trabajador no encontrado")
 
+        stored_metadata = worker.cv_metadata or {}
+        stored_requirements = stored_metadata.get("requirements", []) if isinstance(stored_metadata, dict) else []
+        requirements = payload.requirements or (stored_requirements if isinstance(stored_requirements, list) else [])
+        requirement_summary = payload.requirement_summary or _summarize_requirements(requirements)
         worker_payload = {
             "id": str(worker.id),
             "nombres": worker.nombres,
@@ -347,6 +398,7 @@ async def generate_contract(payload: ContractGeneratePayload, ctx=Depends(requir
             "cargo_postulado": worker.cargo_postulado,
             "sueldo_pactado": str(worker.sueldo_pactado),
             "profesion": worker.profesion,
+            "requirements": requirements,
         }
         rag_service = LegalRagService(
             pgvector_store=PgVectorAccountingStore(uow.session),
@@ -367,6 +419,8 @@ async def generate_contract(payload: ContractGeneratePayload, ctx=Depends(requir
             "end_date": payload.end_date.isoformat() if payload.end_date else None,
             "pension_system": payload.pension_system,
             "t_registro_due": (today.toordinal() + 1),
+            "requirements": requirements,
+            "requirement_summary": requirement_summary,
         }
 
         generator = LaborContractGenerator()
@@ -376,7 +430,12 @@ async def generate_contract(payload: ContractGeneratePayload, ctx=Depends(requir
             legal_context=legal_hits,
             contract_terms=contract_terms,
         )
-        pdf_base64 = generator.generate_pdf_base64(worker_payload, payload.tipo_contrato)
+        pdf_base64 = generator.generate_pdf_base64(
+            worker_payload,
+            payload.tipo_contrato,
+            legal_context=legal_hits,
+            contract_terms=contract_terms,
+        )
         _, package_zip_base64 = generator.generate_annex_zip_base64(
             worker=worker_payload,
             tipo_contrato=payload.tipo_contrato,
@@ -393,6 +452,11 @@ async def generate_contract(payload: ContractGeneratePayload, ctx=Depends(requir
         compliance_alerts = []
         if expiring_in_days is not None and expiring_in_days <= 15:
             compliance_alerts.append("Contrato a plazo fijo vence en <= 15 dias.")
+        required_pending = requirement_summary.get("required_pending", [])
+        if required_pending:
+            compliance_alerts.append(
+                f"Expediente con requisitos obligatorios pendientes/observados: {', '.join(required_pending[:6])}."
+            )
 
         contract = HrContract(
             tenant_id=payload.tenant_id,
@@ -409,6 +473,8 @@ async def generate_contract(payload: ContractGeneratePayload, ctx=Depends(requir
                 "contract_end_date": contract_terms["end_date"],
                 "pension_system": contract_terms["pension_system"],
                 "t_registro_due": t_registro_due_date,
+                "requirements": requirements,
+                "requirement_summary": requirement_summary,
                 "alerts": compliance_alerts,
             },
             contract_text=text,

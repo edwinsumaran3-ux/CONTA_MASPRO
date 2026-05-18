@@ -1,7 +1,7 @@
 import React from 'react';
 import {
   Delete24Regular,
-  DocumentCode24Regular,
+  Document24Regular,
   History24Regular,
   Search24Regular,
 } from '@fluentui/react-icons';
@@ -37,7 +37,7 @@ export const ContextMenu = <T,>({
         Opciones de Auditoria
       </div>
       <button className="w-full text-left px-4 py-2 text-sm hover:bg-blue-50 flex items-center gap-2" onClick={() => onOpenXml(rowData)} type="button">
-        <DocumentCode24Regular style={{ fontSize: 14 }} className="text-blue-600" /> Ver Factura XML
+        <Document24Regular style={{ fontSize: 14 }} className="text-blue-600" /> Ver Factura XML
       </button>
       <button className="w-full text-left px-4 py-2 text-sm hover:bg-blue-50 flex items-center gap-2" onClick={() => onCheckSunat(rowData)} type="button">
         <Search24Regular style={{ fontSize: 14 }} className="text-orange-600" /> Consultar RUC en SUNAT

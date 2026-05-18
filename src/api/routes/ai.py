@@ -1,10 +1,14 @@
-from fastapi import APIRouter, Depends
+import json
+
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
 from src.ai.reasoning_engine import AuditCopilot
 from src.ai.vector_store import PgVectorAccountingStore
 from src.api.dependencies import get_current_context
 from src.application.services.financial_reporting_service import FinancialReportingService
+from src.application.services.invoice_gemini_extractor import InvoiceGeminiExtractor
+from src.application.services.sunat_realtime_verifier import SunatRealtimeVerifier
 from src.config import settings
 from src.infrastructure.adapters.ai.gemini import GeminiClient
 from src.infrastructure.db.session import AsyncSessionLocal
@@ -58,6 +62,48 @@ async def copilot_question(payload: CopilotQuestion, ctx=Depends(get_current_con
         return await copilot.answer_contextual_question(ctx["tenant_id"], payload.question)
     finally:
         await copilot.vector_store.session.close()
+
+
+@router.post("/extract-invoice")
+async def extract_invoice(
+    direction: str = Query(default="sale", pattern="^(sale|purchase)$"),
+    target_fields: str | None = None,
+    file: UploadFile | None = File(default=None),
+    ctx=Depends(get_current_context),
+):
+    if file is None:
+        raise HTTPException(status_code=400, detail="Adjunta una imagen o PDF de comprobante.")
+
+    mime_type = file.content_type or "application/octet-stream"
+    if mime_type not in {"application/pdf", "image/png", "image/jpeg", "image/jpg", "image/webp"}:
+        raise HTTPException(status_code=422, detail="Formato invalido. Usa PDF, JPG, PNG o WEBP.")
+
+    parsed_fields: list[str] | None = None
+    if target_fields:
+        try:
+            raw_fields = json.loads(target_fields)
+            if isinstance(raw_fields, list):
+                parsed_fields = [str(item) for item in raw_fields]
+        except json.JSONDecodeError:
+            parsed_fields = [part.strip() for part in target_fields.split(",") if part.strip()]
+
+    extractor = InvoiceGeminiExtractor(
+        GeminiClient(settings.gemini_api_key, settings.gemini_model),
+        SunatRealtimeVerifier(
+            ruc_lookup_url=settings.sunat_ruc_lookup_url,
+            cpe_lookup_url=settings.sunat_cpe_lookup_url,
+            token=settings.sunat_lookup_token,
+            timeout_seconds=settings.sunat_realtime_timeout_seconds,
+        ),
+        company_ruc=settings.sunat_ruc,
+    )
+    return await extractor.extract(
+        file_bytes=await file.read(),
+        mime_type=mime_type,
+        filename=file.filename,
+        direction=direction,  # type: ignore[arg-type]
+        target_fields=parsed_fields,
+    )
 
 
 @router.get("/config/status")

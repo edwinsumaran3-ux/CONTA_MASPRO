@@ -158,6 +158,52 @@ PCGE_RULE_LIBRARY = [
     },
 ]
 
+ELECTRIC_REGULATED_RULES = [
+    {
+        "keywords": ("APORTE LEY", "LEY 28749", "LEY NRO. 28749", "LEY NRO 28749"),
+        "account_code": "636105",
+        "account_name": "Energia electrica - Aporte Ley 28749",
+        "taxable": False,
+        "tax_treatment": "Cargo regulado Ley 28749 no afecto al IGV; subcuenta de electricidad.",
+    },
+    {
+        "keywords": ("FOSE", "FISE", "LEY 27510"),
+        "account_code": "636106",
+        "account_name": "Energia electrica - FOSE/FISE",
+        "taxable": False,
+        "tax_treatment": "Cargo regulado FOSE/FISE; no afecto al IGV.",
+    },
+    {
+        "keywords": ("ALUMBRADO PUBLICO", "ALUMBRADO PÚBLICO"),
+        "account_code": "636103",
+        "account_name": "Energia electrica - Alumbrado publico",
+        "taxable": True,
+        "tax_treatment": "Cargo regulado de alumbrado publico afecto al IGV.",
+    },
+    {
+        "keywords": ("CARGO FIJO",),
+        "account_code": "636102",
+        "account_name": "Energia electrica - Cargo fijo",
+        "taxable": True,
+        "tax_treatment": "Cargo fijo regulado del servicio electrico afecto al IGV.",
+    },
+    {
+        "keywords": ("REPOSICION Y MANTENIMIENTO", "REPOSICIÓN Y MANTENIMIENTO", "REPOSICION", "REPOSICIÓN", "MANTENIMIENTO ELECTRICO", "MANTENIMIENTO ELÉCTRICO"),
+        "account_code": "636104",
+        "account_name": "Energia electrica - Reposicion y mantenimiento",
+        "taxable": True,
+        "tax_treatment": "Cargo regulado de reposicion y mantenimiento afecto al IGV.",
+    },
+    {
+        "keywords": ("ENERGIA ACTIVA", "ENERGÍA ACTIVA", "CONSUMO ACTIVO"),
+        "account_code": "636101",
+        "account_name": "Energia electrica - Consumo activo",
+        "taxable": True,
+        "tax_treatment": "Consumo de energia electrica activa afecto al IGV.",
+    },
+]
+
+
 LEGAL_TAX_REVIEW_LIBRARY = [
     "Causalidad del gasto: relacion directa o razonable con generacion de renta o mantenimiento de fuente.",
     "Fehaciencia: conservar comprobante, contrato, orden, guia, evidencia de prestacion, conformidad y medio de pago.",
@@ -447,6 +493,202 @@ VALIDACION FINAL INTERNA ANTES DE RESPONDER:
 """
 
 
+
+def _item_amount_value(item: dict[str, Any]) -> Decimal:
+    return _money(item.get("line_subtotal") or item.get("total_line") or item.get("unit_price"))
+
+
+def _set_item_amount_value(item: dict[str, Any], value: Decimal) -> None:
+    amount = _money_str(value)
+    item["line_subtotal"] = amount
+    item["unit_price"] = amount
+    item["total_line"] = amount
+
+
+def _desc_upper(item: dict[str, Any]) -> str:
+    return _norm_upper(item.get("description"))
+
+
+def _is_igv_item(item: dict[str, Any]) -> bool:
+    desc = _desc_upper(item)
+    return any(token in desc for token in ["IGV", "I.G.V", "IMP. GRAL", "IMPUESTO GENERAL A LAS VENTAS"])
+
+
+def _is_fake_ocr_adjustment(item: dict[str, Any]) -> bool:
+    desc = _desc_upper(item)
+    return any(token in desc for token in [
+        "AJUSTE POR DIFERENCIA",
+        "DIFERENCIA DE LECTURA",
+        "AJUSTE PARA CUADRAR",
+        "CONCEPTO REGULADO NO IDENTIFICADO",
+        "AJUSTE OCR",
+    ])
+
+
+def _is_fose_fise(item: dict[str, Any]) -> bool:
+    desc = _desc_upper(item)
+    return "FOSE" in desc or "FISE" in desc or "LEY 27510" in desc
+
+
+def _is_aporte_ley(item: dict[str, Any]) -> bool:
+    desc = _desc_upper(item)
+    return "APORTE LEY" in desc or "LEY 28749" in desc or "LEY NRO" in desc
+
+
+def _is_saldo_redondeo(item: dict[str, Any]) -> bool:
+    return "SALDO POR REDONDEO" in _desc_upper(item)
+
+
+def _is_diferencia_redondeo(item: dict[str, Any]) -> bool:
+    desc = _desc_upper(item)
+    return "DIFERENCIA DE REDONDEO" in desc or "DIFERENCIA POR REDONDEO" in desc
+
+
+def _has_explicit_rounding_items(items: list[dict[str, Any]]) -> bool:
+    return any("REDONDEO" in _desc_upper(item) for item in items)
+
+
+def _is_public_regulated_receipt(data: dict[str, Any], items: list[dict[str, Any]]) -> bool:
+    text = " ".join(
+        [_norm_upper(data.get("supplier_name")), _norm_upper(data.get("document_type"))]
+        + [_desc_upper(item) for item in items]
+    )
+    return any(token in text for token in [
+        "HIDRANDINA", "ELECTRONORTE", "ENEL", "LUZ DEL SUR", "ELECTRICIDAD", "ENERGIA", "ENERGÍA",
+        "SEDAPAL", "EPS", "SUNASS", "SANEAMIENTO", "AGUA POTABLE",
+        "OSINERGMIN", "MUNICIPALIDAD", "SAT", "GOBIERNO", "MINISTERIO", "ESSALUD", "SUNAT",
+        "FOSE", "FISE", "APORTE LEY", "ALUMBRADO PUBLICO", "ALUMBRADO PÚBLICO", "MRSE",
+    ])
+
+
+def _clean_public_receipt_items_and_amounts(
+    data: dict[str, Any],
+    items: list[dict[str, Any]],
+    subtotal: Decimal,
+    igv: Decimal,
+    total_read: Decimal,
+    warnings: list[str],
+    tax_warnings: list[str],
+    accounting_warnings: list[str],
+    ocr_warnings: list[str],
+    reconciliation_notes: list[str],
+) -> tuple[list[dict[str, Any]], Decimal, Decimal]:
+    # Normaliza recibos publicos/regulados sin tocar facturas comerciales normales.
+    if not _is_public_regulated_receipt(data, items):
+        return items, subtotal, igv
+
+    cleaned: list[dict[str, Any]] = []
+    explicit_rounding = _has_explicit_rounding_items(items)
+
+    for item in items:
+        if _is_igv_item(item):
+            reconciliation_notes.append(f"IGV eliminado del detalle y tratado solo como impuesto: {item.get('description')}.")
+            continue
+        if explicit_rounding and _is_fake_ocr_adjustment(item):
+            reconciliation_notes.append(f"Ajuste OCR eliminado porque ya existe redondeo explicito: {item.get('description')}.")
+            continue
+        cleaned.append(item)
+    items = cleaned
+
+    base_tokens = (
+        "CARGO FIJO",
+        "REPOSICION",
+        "REPOSICIÓN",
+        "MANTENIMIENTO",
+        "ENERGIA ACTIVA",
+        "ENERGÍA ACTIVA",
+        "ALUMBRADO PUBLICO",
+        "ALUMBRADO PÚBLICO",
+    )
+    base_sum = sum(
+        (_item_amount_value(item) for item in items if any(token in _desc_upper(item) for token in base_tokens)),
+        Decimal("0.00"),
+    ).quantize(Decimal("0.01"))
+
+    if base_sum > 0 and (subtotal == 0 or abs(subtotal - base_sum) <= Decimal("1.10")):
+        if subtotal != base_sum:
+            ocr_warnings.append(f"Subtotal corregido de {subtotal} a {base_sum} segun conceptos visibles antes del SUB TOTAL.")
+        subtotal = base_sum
+        data["subtotal"] = _money_str(subtotal)
+
+    if subtotal > 0:
+        expected_igv = (subtotal * Decimal("0.18")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        if igv == 0 or abs(igv - expected_igv) <= Decimal("1.10"):
+            if igv != expected_igv:
+                ocr_warnings.append(f"IGV corregido de {igv} a {expected_igv} usando SUB TOTAL visible {subtotal}.")
+            igv = expected_igv
+            data["igv"] = _money_str(igv)
+
+    for item in items:
+        desc_up = _desc_upper(item)
+        matched_rule: dict[str, Any] | None = None
+        for rule in ELECTRIC_REGULATED_RULES:
+            if any(token in desc_up for token in rule["keywords"]):
+                matched_rule = rule
+                break
+        if matched_rule is None:
+            continue
+        item["line_type"] = "REGULATED_CHARGE"
+        item["account_code"] = matched_rule["account_code"]
+        item["account_name"] = matched_rule["account_name"]
+        item["taxable"] = bool(matched_rule["taxable"])
+        if not matched_rule["taxable"]:
+            item["igv_amount"] = "0.00"
+        item["requires_support"] = False
+        item["requires_bancarization"] = False
+        item["requires_detraccion_review"] = False
+        item["deductibility"] = "DEDUCIBLE"
+        item["igv_credit"] = "SI" if matched_rule["taxable"] else "NO"
+        item["tax_treatment"] = matched_rule.get("tax_treatment") or "Cargo regulado de electricidad; subcuenta especifica."
+        item["ai_reason"] = f"Reclasificado por reglas reguladas electricas: {matched_rule['account_name']}."
+        item["ai_confidence"] = 0.98
+
+    saldo = sum((_item_amount_value(item) for item in items if _is_saldo_redondeo(item)), Decimal("0.00")).quantize(Decimal("0.01"))
+    aporte = sum((_item_amount_value(item) for item in items if _is_aporte_ley(item)), Decimal("0.00")).quantize(Decimal("0.01"))
+    diff_items = [item for item in items if _is_diferencia_redondeo(item)]
+
+    if diff_items:
+        current_diff = sum((_item_amount_value(item) for item in diff_items), Decimal("0.00")).quantize(Decimal("0.01"))
+        expected_diff = (total_read - subtotal - igv - saldo - aporte).quantize(Decimal("0.01"))
+        if abs(current_diff - expected_diff) <= Decimal("2.00"):
+            if current_diff != expected_diff:
+                ocr_warnings.append(f"Diferencia de redondeo corregida de {current_diff} a {expected_diff} usando TOTAL impreso.")
+            _set_item_amount_value(diff_items[0], expected_diff)
+
+    diff = sum((_item_amount_value(item) for item in diff_items), Decimal("0.00")).quantize(Decimal("0.01"))
+    fose_items = [item for item in items if _is_fose_fise(item)]
+    total_without_fose = (subtotal + igv + saldo + aporte + diff).quantize(Decimal("0.01"))
+
+    if fose_items and abs(total_without_fose - total_read) <= Decimal("0.02"):
+        for item in fose_items:
+            item["line_type"] = "INFO_ONLY"
+            item["taxable"] = False
+            item["igv_amount"] = "0.00"
+            item["requires_support"] = False
+            item["tax_treatment"] = "FOSE/FISE informativo posterior al total; no se contabiliza doble si el total cuadra."
+        reconciliation_notes.append("FOSE/FISE tratado como INFO_ONLY porque el total cuadra sin sumarlo.")
+
+    def _keep_warning(value: Any) -> bool:
+        s = str(value).upper()
+        return not any(token in s for token in [
+            "IGV DECLARADO",
+            "NO CORRESPONDE AL 18",
+            "NO ES EL 18",
+            "BASE IMPONIBLE",
+            "AUDITOR",
+            "DIFERENCIA MAYOR A TOLERANCIA",
+            "AJUSTE AUTOMATICO CONTRA TOTAL",
+            "SUMA DE LOS CONCEPTOS",
+        ])
+
+    warnings[:] = [w for w in warnings if _keep_warning(w)]
+    tax_warnings[:] = [w for w in tax_warnings if _keep_warning(w)]
+    accounting_warnings[:] = [w for w in accounting_warnings if _keep_warning(w)]
+
+    reconciliation_notes.append("RECIBO_PUBLICO_FLEXIBLE: se respetan montos impresos, subcuentas y centro de costo de gastos.")
+    return items, subtotal, igv
+
+
 def _normalize_ai_response(data: dict[str, Any]) -> dict[str, Any]:
     warnings = list(data.get("warnings") or [])
     audit = dict(data.get("audit_metadata") or {})
@@ -520,10 +762,23 @@ def _normalize_ai_response(data: dict[str, Any]) -> dict[str, Any]:
         }
         items.append(item)
 
-    subtotal = _money(data.get("subtotal") or sum(_money(item["line_subtotal"]) for item in items if item.get("line_type") == "EXPENSE_OR_ASSET"))
-    igv = _money(data.get("igv") or sum(_money(item.get("igv_amount")) for item in items))
-    total_read = _money(data.get("total_read_from_document") or data.get("total") or subtotal + igv)
+    subtotal = _money(data.get("printed_subtotal") or data.get("subtotal") or sum(_money(item["line_subtotal"]) for item in items if item.get("line_type") == "EXPENSE_OR_ASSET"))
+    igv = _money(data.get("printed_igv") or data.get("igv") or sum(_money(item.get("igv_amount")) for item in items))
+    total_read = _money(data.get("printed_total") or data.get("total_read_from_document") or data.get("total") or subtotal + igv)
     total = total_read
+
+    items, subtotal, igv = _clean_public_receipt_items_and_amounts(
+        data,
+        items,
+        subtotal,
+        igv,
+        total_read,
+        warnings,
+        tax_warnings,
+        accounting_warnings,
+        ocr_warnings,
+        reconciliation_notes,
+    )
 
     if not items and subtotal > 0:
         local = _classify_local(_norm_text(data.get("supplier_name")) or "gasto por clasificar", supplier_name, fallback_cc)
@@ -563,6 +818,10 @@ def _normalize_ai_response(data: dict[str, Any]) -> dict[str, Any]:
         kind = _norm_text(item.get("line_type")) or "EXPENSE_OR_ASSET"
         amount = _money(item.get("line_subtotal"))
 
+        if kind == "INFO_ONLY":
+            reconciliation_notes.append(f"Linea informativa no contabilizada: {item.get('description')}.")
+            continue
+
         if kind == "ROUNDING" and abs(amount) <= AUTO_ROUNDING_TOLERANCE:
             pass
         elif kind == "ROUNDING":
@@ -579,7 +838,7 @@ def _normalize_ai_response(data: dict[str, Any]) -> dict[str, Any]:
         key = (code, name, target_cc, kind)
         debit_by_key[key] = debit_by_key.get(key, Decimal("0.00")) + amount
 
-        if item.get("requires_support") and kind not in {"ROUNDING", "PRIOR_BALANCE", "ADVANCE_PAYMENT"}:
+        if item.get("requires_support") and kind not in {"ROUNDING", "PRIOR_BALANCE", "ADVANCE_PAYMENT", "REGULATED_CHARGE", "INFO_ONLY"}:
             tax_warnings.append(f"{item.get('description')}: requiere sustento adicional.")
 
     for (code, name, cc, kind), amount in debit_by_key.items():
@@ -627,7 +886,9 @@ def _normalize_ai_response(data: dict[str, Any]) -> dict[str, Any]:
     expected_credit = total_read
     difference = (expected_credit + credit_before_reconcile - debit_before_reconcile).quantize(Decimal("0.01"))
 
-    if difference != 0:
+    has_explicit_rounding = _has_explicit_rounding_items(items)
+
+    if difference != 0 and not has_explicit_rounding:
         if difference > 0:
             account_lines.append({
                 "account_code": ROUNDING_EXPENSE_ACCOUNT,
@@ -653,6 +914,8 @@ def _normalize_ai_response(data: dict[str, Any]) -> dict[str, Any]:
         reconciliation_notes.append(f"Ajuste automatico contra total impreso: {difference}.")
         if abs(difference) > AUTO_ROUNDING_TOLERANCE:
             accounting_warnings.append(f"Diferencia mayor a tolerancia de redondeo ({AUTO_ROUNDING_TOLERANCE}): {difference}. Revisar OCR/importes.")
+    elif difference != 0 and has_explicit_rounding:
+        reconciliation_notes.append(f"Diferencia {difference} no genera ajuste adicional porque ya existe redondeo explicito.")
 
     account_lines.append({
         "account_code": PAYABLE_ACCOUNT,
@@ -672,7 +935,13 @@ def _normalize_ai_response(data: dict[str, Any]) -> dict[str, Any]:
     if reconciliation_difference != 0:
         accounting_warnings.append(f"Asiento no cuadrado despues de reconciliacion: {reconciliation_difference}.")
 
-    requires_review = bool(accounting_warnings or [w for w in warnings if "No se pudo leer" in w])
+    is_public_receipt = _is_public_regulated_receipt(data, items)
+    if is_public_receipt and reconciliation_difference == 0:
+        accounting_warnings = [w for w in accounting_warnings if "Asiento no cuadrado" in str(w)]
+        requires_review = bool([w for w in warnings if "No se pudo leer RUC" in str(w) or "No se pudo leer razon social" in str(w)])
+    else:
+        requires_review = bool(accounting_warnings or [w for w in warnings if "No se pudo leer" in w] or data.get("requires_visual_review"))
+
     reconciliation_status = "OK" if reconciliation_difference == 0 and not requires_review else "REQUIRES_REVIEW"
 
     accounts_to_upsert = []
@@ -758,6 +1027,41 @@ async def process_purchase_with_gemini(
 
     prompt = f"""
 Eres CONTA_PRO Vision Accounting Engine.
+REGLA MADRE CONTA_PRO PARA COMPRAS:
+- FASE 1: lectura visual pura del comprobante. Transcribe importes tal como figuran; no inventes ni recalcules.
+- FASE 2: validacion matematica contra total impreso.
+- FASE 3: clasificacion contable/tributaria por concepto.
+- FASE 4: asiento contable.
+
+
+REGLA CRITICA DE DESGLOSE VISUAL:
+- En recibos de servicios publicos NO agrupes conceptos.
+- Cada fila visible del comprobante debe salir como item independiente.
+- Esta prohibido devolver "Servicios basicos (Cargo Fijo, Reposicion...)" como una sola linea.
+- Debe separar:
+  * Cargo fijo
+  * Cargo por reposicion y mantenimiento
+  * Energia activa
+  * Alumbrado publico
+  * Aporte Ley 28749
+  * Saldo por redondeo
+  * Diferencia de redondeo
+  * FOSE/FISE si aparece
+- El IGV no es item; va solo como impuesto.
+- Si no puedes leer el importe exacto de una fila visible, no inventes: marca requires_visual_review=true.
+
+RECIBOS PUBLICOS / SERVICIOS REGULADOS:
+- En electricidad, agua, saneamiento, telecom, municipalidad o gobierno, los importes impresos mandan.
+- Prioridad: subcuenta correcta, centro de costo correcto en gastos clase 6/9 y total igual al recibo.
+- Si existe SUB TOTAL impreso, ese SUB TOTAL manda como base gravada del bloque.
+- Si existe IGV impreso o se deduce del SUB TOTAL visible, usar ese IGV; no convertir diferencias de IGV en redondeo falso.
+- Si el recibo trae Saldo por redondeo o Diferencia de redondeo, NO crear una tercera linea de ajuste.
+- La linea visible Diferencia de redondeo absorbe el cuadre contra el total impreso.
+- Aporte Ley 28749 es cargo regulado no afecto al IGV si aparece despues del IGV; no requiere revision contable si esta identificado.
+- FOSE/FISE posterior al total es informativo si el total ya cuadra sin sumarlo; no contabilizar doble.
+- El IGV no debe aparecer como item de detalle; debe ir solo a 40111.
+- Facturas comerciales normales siguen con validacion estricta.
+
 Analiza el archivo como comprobante empresarial peruano.
 Usa criterio contable, tributario, legal-documentario y auditoria.
 {_json_schema_instruction()}

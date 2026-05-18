@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 from uuid import uuid4
-from sqlalchemy import Date, DateTime, ForeignKey, Numeric, String, Text, Boolean, Integer, CheckConstraint, UniqueConstraint
+from sqlalchemy import CHAR, Computed, Date, DateTime, ForeignKey, Numeric, String, Text, Boolean, Integer, CheckConstraint, UniqueConstraint, event
 from sqlalchemy.dialects.postgresql import UUID, JSONB, INET
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -143,8 +143,13 @@ class JournalEntry(Base):
     source_module: Mapped[str] = mapped_column(String(40), nullable=False, default="ACCOUNTING")
     source_id: Mapped[str | None] = mapped_column(Text)
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="PEN")
-    total_debit: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
-    total_credit: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    total_debit: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    total_credit: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    tipo_cambio: Mapped[Decimal] = mapped_column(Numeric(6, 4), nullable=False, default=Decimal("1.0000"))
+    estado_asiento: Mapped[str] = mapped_column(String(20), nullable=False, default="VALIDADO")
+    validar_status: Mapped[str] = mapped_column(String(30), nullable=False, default="OK")
+    tipo_asiento_id: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    asiento_num: Mapped[str | None] = mapped_column(String(24))
     previous_hash: Mapped[str] = mapped_column(Text, nullable=False)
     row_hash: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="POSTED")
@@ -158,18 +163,84 @@ class JournalLine(Base):
     tenant_id: Mapped[str] = mapped_column(UUID(as_uuid=True), nullable=False)
     company_id: Mapped[str | None] = mapped_column(UUID(as_uuid=True))
     entry_id: Mapped[str] = mapped_column(UUID(as_uuid=True), ForeignKey("journal_entries.id"), nullable=False)
+    linea_idx: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     account_code: Mapped[str] = mapped_column(String(20), nullable=False)
     account_name: Mapped[str | None] = mapped_column(Text)
-    debit: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=0)
-    credit: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=0)
+    debit: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=0)
+    credit: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=0)
+    tipo_cambio: Mapped[Decimal] = mapped_column(Numeric(6, 4), nullable=False, default=Decimal("1.0000"))
+    debe_mn: Mapped[Decimal] = mapped_column(Numeric(18, 4), Computed("debit * tipo_cambio", persisted=True))
+    haber_mn: Mapped[Decimal] = mapped_column(Numeric(18, 4), Computed("credit * tipo_cambio", persisted=True))
+    periodo_fiscal: Mapped[str] = mapped_column(String(7), nullable=False)
+    modulo_origen: Mapped[str] = mapped_column(String(20), nullable=False)
     cost_center: Mapped[str | None] = mapped_column(String(80))
     project_code: Mapped[str | None] = mapped_column(String(80))
     partner_ruc: Mapped[str | None] = mapped_column(String(11))
     document_type: Mapped[str | None] = mapped_column(String(4))
     document_series: Mapped[str | None] = mapped_column(String(10))
     document_number: Mapped[str | None] = mapped_column(String(30))
+    comp_tipo: Mapped[str | None] = mapped_column(CHAR(2))
+    comp_fecha_emision: Mapped[date | None] = mapped_column(Date)
+    comp_fecha_vencimiento: Mapped[date | None] = mapped_column(Date)
+    tercero_tipo_doc: Mapped[str | None] = mapped_column(CHAR(1))
+    tercero_num: Mapped[str | None] = mapped_column(String(15))
+    tercero_razon_social: Mapped[str | None] = mapped_column(String(255))
+    estado_asiento: Mapped[str] = mapped_column(String(20), nullable=False, default="VALIDADO")
+    validar_status: Mapped[str] = mapped_column(String(30), nullable=False, default="OK")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     entry: Mapped[JournalEntry] = relationship(back_populates="lines")
+
+
+@event.listens_for(JournalLine, "before_insert")
+def _journal_line_fill_derived(mapper, connection, target: "JournalLine") -> None:
+    """Auto-fill F2 derived fields from the parent JournalEntry so existing
+    callers (LedgerPostingService, payroll) don't need to be changed.
+    """
+    parent = getattr(target, "entry", None)
+    if parent is not None:
+        if not target.periodo_fiscal and getattr(parent, "entry_date", None) is not None:
+            target.periodo_fiscal = parent.entry_date.strftime("%Y-%m")
+        if not target.modulo_origen and getattr(parent, "source_module", None):
+            target.modulo_origen = parent.source_module
+        if not target.linea_idx:
+            sibling_lines = list(getattr(parent, "lines", None) or [])
+            try:
+                target.linea_idx = sibling_lines.index(target) + 1
+            except ValueError:
+                target.linea_idx = len(sibling_lines) + 1 if sibling_lines else 1
+
+    if not target.linea_idx:
+        target.linea_idx = 1
+    if target.tipo_cambio is None:
+        target.tipo_cambio = Decimal("1.0000")
+    if not target.estado_asiento:
+        target.estado_asiento = "VALIDADO"
+    if not target.validar_status:
+        target.validar_status = "OK"
+
+    if not target.tercero_num and target.partner_ruc:
+        target.tercero_num = target.partner_ruc
+        if not target.tercero_tipo_doc:
+            length = len(target.partner_ruc)
+            if length == 11:
+                target.tercero_tipo_doc = "6"
+            elif length == 8:
+                target.tercero_tipo_doc = "1"
+
+    if not target.comp_tipo and target.document_type:
+        target.comp_tipo = target.document_type[:2]
+
+
+@event.listens_for(JournalEntry, "before_insert")
+def _journal_entry_fill_derived(mapper, connection, target: "JournalEntry") -> None:
+    if target.tipo_cambio is None:
+        target.tipo_cambio = Decimal("1.0000")
+    if not target.estado_asiento:
+        target.estado_asiento = "VALIDADO"
+    if not target.validar_status:
+        target.validar_status = "OK"
+    if not target.tipo_asiento_id:
+        target.tipo_asiento_id = 1
 
 class FinancialDocument(Base):
     __tablename__ = "financial_documents"

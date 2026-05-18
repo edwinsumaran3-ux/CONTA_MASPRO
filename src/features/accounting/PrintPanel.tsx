@@ -3,6 +3,8 @@ import { Button, Field, Input, MessageBar, MessageBarBody } from '@fluentui/reac
 import { Print24Regular, Mail24Regular, Send24Regular } from '@fluentui/react-icons';
 
 type PrintPanelProps = {
+  token?: string;
+  tenantId?: string;
   invoiceData: {
     serie: string;
     number: string;
@@ -24,7 +26,11 @@ type PrintPanelProps = {
   onClose: () => void;
 };
 
+const API_BASE = '/api/v1';
+
 export const PrintPanel: React.FC<PrintPanelProps> = ({
+  token,
+  tenantId,
   invoiceData,
   customerEmail = '',
   customerPhone = '',
@@ -38,24 +44,48 @@ export const PrintPanel: React.FC<PrintPanelProps> = ({
   const [message, setMessage] = useState('');
 
   useEffect(() => {
-    fetchPrinters();
-  }, []);
+    void fetchPrinters();
+  }, [token, tenantId]);
 
   const fetchPrinters = async () => {
+    setLoading(true);
     try {
-      // En producción, esto vendría de un endpoint backend
-      // que escanea la red local por impresoras disponibles
-      const mockPrinters = [
-        { name: 'Xerox Phaser', ip: '192.168.1.100' },
-        { name: 'HP LaserJet Pro', ip: '192.168.1.101' },
-        { name: 'Epson WorkForce', ip: '192.168.1.102' },
-      ];
-      setPrinters(mockPrinters);
-      if (mockPrinters.length > 0) {
-        setSelectedPrinter(mockPrinters[0].name);
+      if (token && tenantId) {
+        const response = await fetch(`${API_BASE}/ledger/documents/printers/detect`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'X-Tenant-Id': tenantId,
+          },
+        });
+        if (!response.ok) {
+          throw new Error(await response.text());
+        }
+        const payload = await response.json();
+        const detected = Array.isArray(payload.items) ? payload.items : [];
+        setPrinters(detected);
+        if (detected.length > 0) {
+          setSelectedPrinter(detected[0].name);
+          setMessage(`Impresoras detectadas: ${detected.length}.`);
+        } else {
+          setMessage('No se detectaron impresoras. Se usara el dialogo local del navegador.');
+        }
+        return;
       }
+
+      const fallbackPrinters = [
+        { name: 'Impresora local del navegador', ip: 'localhost' },
+      ];
+      setPrinters(fallbackPrinters);
+      setSelectedPrinter(fallbackPrinters[0].name);
     } catch {
-      setMessage('No se pudo detectar impresoras en la red.');
+      const fallbackPrinters = [
+        { name: 'Impresora local del navegador', ip: 'localhost' },
+      ];
+      setPrinters(fallbackPrinters);
+      setSelectedPrinter(fallbackPrinters[0].name);
+      setMessage('No se pudo detectar impresoras en red. Se usara el dialogo local del navegador.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -203,7 +233,14 @@ startxref
         </select>
       </Field>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+        <Button
+          appearance="secondary"
+          onClick={() => void fetchPrinters()}
+          disabled={loading}
+        >
+          {loading ? 'Buscando...' : 'Buscar impresoras'}
+        </Button>
         <Button
           appearance="primary"
           icon={<Print24Regular />}

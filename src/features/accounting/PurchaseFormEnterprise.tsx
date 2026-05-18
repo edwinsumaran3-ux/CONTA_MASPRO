@@ -651,7 +651,7 @@ export const PurchaseFormEnterprise = ({ form, onFormChange, tenantId, onClose, 
         code: String(raw.code || ''),
         lineSubtotal: money(lineSubtotal),
         accountCode,
-        lineType: detectedLineType,
+        lineType: detectedLineType as AccountingLineType,
       })
         ? false
         : Boolean(requiresSupport || aiConfidence < 0.8 || (accountCode === '659101' && detectedLineType !== 'ROUNDING'));
@@ -676,7 +676,7 @@ export const PurchaseFormEnterprise = ({ form, onFormChange, tenantId, onClose, 
         taxable: Boolean(raw.taxable ?? detectedLineType === 'EXPENSE_OR_ASSET'),
         igvAmount: money(toNumber(raw.igv_amount || 0)),
         totalLine: money(toNumber(raw.total_line || lineSubtotal)),
-        lineType: detectedLineType,
+        lineType: detectedLineType as AccountingLineType,
         requiresSupport,
       };
     });
@@ -957,22 +957,25 @@ export const PurchaseFormEnterprise = ({ form, onFormChange, tenantId, onClose, 
   };
 
   return (
-    <div className="sheet-form" style={{ display: 'grid', gap: 14, maxHeight: '82vh', overflowY: 'auto', paddingRight: 6 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
-        <Text weight="semibold">Factura de Compra | Motor experto contable y tributario</Text>
-        <div style={{ display: 'flex', gap: 8 }}>
+    <div className="sheet-form pro-form pro-purchase-form">
+      <div className="pro-form-header">
+        <div>
+          <Text weight="semibold">Factura de Compra</Text>
+          <p>Motor experto contable, tributario, OCR Gemini y control de sustento.</p>
+        </div>
+        <div className="pro-header-actions">
           <Button appearance="secondary" onClick={openGuideFromInvoice}>Generar guía</Button>
           <Button appearance="secondary" onClick={() => setShowModify(true)}>Modificar</Button>
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+      <div className="pro-form-grid three">
         <Field label="Serie"><Input value={form.serie} onChange={(_, d) => updateField('serie', d.value)} /></Field>
         <Field label="Número"><Input value={form.number} onChange={(_, d) => updateField('number', d.value)} /></Field>
         <Field label="Fecha"><Input type="date" value={issueDate} onChange={(_, d) => setIssueDate(d.value)} /></Field>
       </div>
 
-      <div style={{ border: '2px dashed #3b82f6', borderRadius: 12, padding: 16, background: '#f8fbff', textAlign: 'center' }}>
+      <div className="pro-upload-card">
         <Text weight="semibold">Adjuntar factura / OCR Gemini</Text>
         <input
           ref={fileInputRef}
@@ -984,23 +987,23 @@ export const PurchaseFormEnterprise = ({ form, onFormChange, tenantId, onClose, 
             if (file) void readInvoiceWithGemini(file);
           }}
         />
-        <div style={{ marginTop: 8, display: 'flex', gap: 8, justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap' }}>
+        <div className="pro-upload-actions">
           <button className="btn-fluent-primary" type="button" onClick={() => fileInputRef.current?.click()} disabled={isReadingAi}>
             {isReadingAi ? 'Leyendo con Gemini...' : 'Adjuntar imagen/PDF y leer con IA'}
           </button>
-          {selectedFileName && <span style={{ fontSize: 12, color: '#334155' }}>{selectedFileName}</span>}
+          {selectedFileName && <span>{selectedFileName}</span>}
         </div>
-        <div style={{ marginTop: 8, fontSize: 12, color: '#64748b' }}>
+        <div className="pro-help-text">
           Gemini analiza imagen/PDF, extrae datos, clasifica cuenta contable, centro de costo y criterio tributario.
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 12 }}>
+      <div className="pro-form-grid customer">
         <Field label="RUC proveedor"><Input value={form.supplierRuc} onChange={(_, d) => updateField('supplierRuc', d.value)} contentAfter={<Search24Regular />} /></Field>
         <Field label="Razón social proveedor"><Input value={supplierName} onChange={(_, d) => setSupplierName(d.value)} /></Field>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 12 }}>
+      <div className="pro-validation-row">
         <Button appearance="secondary" onClick={validateRucExternally}>Validar RUC Externo</Button>
         <MessageBar intent={rucState === 'valid' ? 'success' : rucState === 'invalid' ? 'error' : 'info'}><MessageBarBody>{rucMessage}</MessageBarBody></MessageBar>
       </div>
@@ -1025,14 +1028,14 @@ export const PurchaseFormEnterprise = ({ form, onFormChange, tenantId, onClose, 
         </MessageBar>
       )}
 
-      <section className="dashboard-card" style={{ padding: 12 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+      <section className="dashboard-card pro-section">
+        <div className="pro-section-header">
           <Text weight="semibold">Detalle de Factura - Compras</Text>
           <button className="btn-fluent-primary" type="button" onClick={addItem}>+ Agregar producto</button>
         </div>
 
-        <div style={{ overflowX: 'auto' }}>
-          <table className="erp-table" style={{ width: '100%', minWidth: 1320 }}>
+        <div className="pro-table-wrap">
+          <table className="erp-table pro-input-table wide">
             <thead>
               <tr>
                 <th>Código</th><th>Descripción</th><th>Unidad</th><th>Cant.</th><th>P. Unit.</th><th>Subtotal</th><th>Cuenta</th><th>Nombre cuenta</th><th>Centro costo</th><th>Criterio tributario</th><th>IA</th><th>Acc.</th>
@@ -1062,9 +1065,9 @@ export const PurchaseFormEnterprise = ({ form, onFormChange, tenantId, onClose, 
         </div>
       </section>
 
-      <section className="dashboard-card" style={{ padding: 12 }}>
+      <section className="dashboard-card pro-section">
         <Text weight="semibold">Asiento contable sugerido</Text>
-        <table className="erp-table" style={{ width: '100%', marginTop: 10 }}>
+        <table className="erp-table pro-ledger-table">
           <thead><tr><th>Cuenta</th><th>Descripción</th><th>Centro costo</th><th>Debe</th><th>Haber</th></tr></thead>
           <tbody>
             {accountingLines.map((line, index) => (
@@ -1080,19 +1083,22 @@ export const PurchaseFormEnterprise = ({ form, onFormChange, tenantId, onClose, 
         </table>
       </section>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12 }}>
+      <div className="pro-form-grid four">
         <Field label="Cuenta fallback"><Input value={form.expenseAccount} onChange={(_, d) => updateField('expenseAccount', d.value)} /></Field>
         <Field label="Centro costo general"><Input value={form.costCenter} onChange={(_, d) => updateField('costCenter', d.value)} /></Field>
         <Field label="Subtotal"><Input value={money(subtotal)} disabled /></Field>
         <Field label="IGV"><Input value={money(igv)} disabled={isAutoIgv} onChange={(_, d) => updateField('igv', d.value)} /></Field>
       </div>
 
-      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+      <label className="pro-checkline">
         <input type="checkbox" checked={isAutoIgv} onChange={(e) => setIsAutoIgv(e.target.checked)} />
         IGV auto-calculado 18%
       </label>
 
-      <Text weight="semibold">Total: S/ {money(total)}</Text>
+      <div className="pro-total-banner">
+        <span>Total a pagar</span>
+        <strong>S/ {money(total)}</strong>
+      </div>
       {aiTotalReadFromDocument && <Text size={200}>Total del comprobante leído por IA: S/ {aiTotalReadFromDocument}</Text>}
 
       {status && <MessageBar intent={status.includes('No se pudo') || status.includes('Falta') || status.includes('requiere') ? 'error' : 'success'}><MessageBarBody>{status}</MessageBarBody></MessageBar>}
@@ -1127,7 +1133,7 @@ export const PurchaseFormEnterprise = ({ form, onFormChange, tenantId, onClose, 
         </section>
       )}
 
-      <div className="sheet-footer" style={{ position: 'static', borderTop: 'none', padding: 0, marginTop: 8, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+      <div className="sheet-footer pro-action-bar">
         <Button appearance="secondary" onClick={onClose}>Cancelar</Button>
         <button type="button" className="btn-fluent-primary" onClick={handleSubmit} disabled={isPosting}>{isPosting ? 'Posteando...' : 'Guardar y Postear'}</button>
       </div>
@@ -1136,3 +1142,4 @@ export const PurchaseFormEnterprise = ({ form, onFormChange, tenantId, onClose, 
 };
 
 export default PurchaseFormEnterprise;
+

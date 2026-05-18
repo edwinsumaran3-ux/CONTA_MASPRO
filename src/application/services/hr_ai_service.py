@@ -18,9 +18,12 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, Tabl
 
 CV_EXTRACTION_PROMPT = (
     "Actua como un Especialista en Seleccion de Personal. Extrae del archivo adjunto los siguientes campos: "
-    "Nombres, Apellidos, DNI (valida que tenga 8 digitos), Direccion, Telefono, Correo, Profesion y Experiencia. "
+    "Nombres, Apellidos, DNI (valida que tenga 8 digitos), Fecha de nacimiento, Direccion, Telefono, Correo, "
+    "Profesion, Estudios, Experiencia, Sistema pensionario, cuenta bancaria/CCI y evidencias documentarias. "
     "Instruccion critica: Si encuentras discrepancias entre la direccion del CV y los datos de Reniec, genera una "
-    "alerta de 'Validacion de Domicilio'. Mapea cada dato a su celda correspondiente en el formulario Registro_Personal_V1."
+    "alerta de 'Validacion de Domicilio'. Mapea cada dato a su celda correspondiente en el formulario Registro_Personal_V1 "
+    "y llena la base de requisitos: DNI, foto, ficha personal, hoja de vida documentada, estudios, certificados laborales, "
+    "antecedentes policiales, penales, judiciales, declaracion de domicilio, AFP/ONP y cuenta bancaria."
 )
 
 
@@ -64,9 +67,14 @@ class WorkerDraft:
     email: str = ""
     profesion: str = ""
     experiencia: str = ""
+    estudios_realizados: str = ""
     cargo_postulado: str = ""
     sueldo_pactado: Decimal = Decimal("0.00")
+    pension_system: str = ""
+    cuenta_bancaria: str = ""
+    cci: str = ""
     habilidades_clave: list[str] = field(default_factory=list)
+    requirements: list[dict] = field(default_factory=list)
     alerts: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict:
@@ -80,9 +88,14 @@ class WorkerDraft:
             "email": self.email,
             "profesion": self.profesion,
             "experiencia": self.experiencia,
+            "estudios_realizados": self.estudios_realizados,
             "cargo_postulado": self.cargo_postulado,
             "sueldo_pactado": str(self.sueldo_pactado),
+            "pension_system": self.pension_system,
+            "cuenta_bancaria": self.cuenta_bancaria,
+            "cci": self.cci,
             "habilidades_clave": self.habilidades_clave,
+            "requirements": self.requirements,
             "alerts": self.alerts,
         }
 
@@ -110,12 +123,15 @@ class CvExtractionService:
         draft.dni = self._first_match(cleaned, r"\b(\d{8})\b")
         draft.email = self._first_match(cleaned, r"([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})")
         draft.telefono = self._first_match(cleaned, r"(?:\+?51\s*)?(\d{9})\b")
-        draft.fecha_nacimiento = self._first_match(cleaned, r"(\d{1,2}[/-]\d{1,2}[/-]\d{4})") or None
+        draft.fecha_nacimiento = self._normalize_date(self._first_match(cleaned, r"(\d{1,2}[/-]\d{1,2}[/-]\d{4})")) or None
         draft.sueldo_pactado = self._money(cleaned)
         draft.direccion_domicilio = self._extract_address(cleaned)
         draft.profesion = self._extract_profession(cleaned)
         draft.experiencia = self._extract_experience(cleaned)
+        draft.estudios_realizados = self._extract_studies(cleaned)
         draft.cargo_postulado = draft.profesion or "Por definir"
+        draft.pension_system = self._extract_pension_system(cleaned)
+        draft.cuenta_bancaria, draft.cci = self._extract_bank_data(cleaned)
         draft.habilidades_clave = self._extract_skills(cleaned)
         draft.nombres, draft.apellidos = self._extract_names(cleaned)
 
@@ -126,6 +142,7 @@ class CvExtractionService:
         if reniec_address and draft.direccion_domicilio and self._normalize_address(reniec_address) != self._normalize_address(draft.direccion_domicilio):
             draft.alerts.append("Validacion de Domicilio: la direccion del CV difiere de RENIEC.")
 
+        draft.requirements = self._build_requirements(cleaned, draft)
         return draft
 
     def parse_cv_batch(self, text: str, *, reniec_address: str | None = None) -> list[dict]:
@@ -248,6 +265,21 @@ class CvExtractionService:
         return match.group(1).strip() if match else ""
 
     @staticmethod
+    def _normalize_date(raw: str) -> str:
+        if not raw:
+            return ""
+        for separator in ("/", "-"):
+            parts = raw.split(separator)
+            if len(parts) != 3:
+                continue
+            day, month, year = parts
+            try:
+                return date(int(year), int(month), int(day)).isoformat()
+            except Exception:
+                return raw
+        return raw
+
+    @staticmethod
     def _money(text: str) -> Decimal:
         match = re.search(r"(?:S/|sueldo(?:\s+pedido)?|remuneracion)\s*[:=]?\s*([0-9]+(?:[.,][0-9]{2})?)", text, flags=re.IGNORECASE)
         if not match:
@@ -256,7 +288,11 @@ class CvExtractionService:
 
     @staticmethod
     def _extract_address(text: str) -> str:
-        match = re.search(r"(?:vive en|direccion|domicilio)\s*[:=]?\s*([^.;]+)", text, flags=re.IGNORECASE)
+        match = re.search(
+            r"(?:vive en|direccion|domicilio)\s*[:=]?\s*(.+?)(?=\s+(?:telefono|celular|correo|email|dni|estudios|formacion|educacion|experiencia|afp|onp|cci|cuenta|habilidades)\b|[.;]|$)",
+            text,
+            flags=re.IGNORECASE,
+        )
         return match.group(1).strip() if match else ""
 
     @staticmethod
@@ -270,8 +306,48 @@ class CvExtractionService:
 
     @staticmethod
     def _extract_experience(text: str) -> str:
-        match = re.search(r"((?:\d+\s+anos|senior|junior|experiencia)[^.;]*)", text, flags=re.IGNORECASE)
+        match = re.search(
+            r"((?:\d+\s+anos|senior|junior|experiencia).+?)(?=\s+(?:estudios|formacion|educacion|afp|onp|cci|cuenta|telefono|correo|email|dni|direccion|domicilio)\b|[.;]|$)",
+            text,
+            flags=re.IGNORECASE,
+        )
         return match.group(1).strip() if match else ""
+
+    @staticmethod
+    def _extract_studies(text: str) -> str:
+        patterns = [
+            r"(?:estudios|formacion academica|educacion)\s*[:=]?\s*(.+?)(?=\s+(?:experiencia|telefono|correo|email|dni|direccion|domicilio|afp|onp|cci|cuenta|habilidades)\b|[.;]|$)",
+            r"\b(universidad|instituto|bachiller|titulado|licenciado|tecnico|diploma|certificado)\b[^.;]*",
+        ]
+        first = re.search(patterns[0], text, flags=re.IGNORECASE)
+        if first:
+            return first.group(1).strip(" ,.;:-").title()
+        second = re.search(patterns[1], text, flags=re.IGNORECASE)
+        if second:
+            raw = re.split(
+                r"\b(experiencia|telefono|correo|email|dni|direccion|domicilio|afp|onp|cci|cuenta|habilidades)\b",
+                second.group(0),
+                maxsplit=1,
+                flags=re.IGNORECASE,
+            )[0]
+            return raw.strip(" ,.;:-").title()
+        return ""
+
+    @staticmethod
+    def _extract_pension_system(text: str) -> str:
+        match = re.search(r"\b(AFP|ONP|Prima AFP|Integra AFP|Habitat AFP|Profuturo AFP)\b", text, flags=re.IGNORECASE)
+        if not match:
+            return ""
+        value = match.group(1).upper()
+        return "ONP" if "ONP" in value else "AFP"
+
+    @staticmethod
+    def _extract_bank_data(text: str) -> tuple[str, str]:
+        cci = CvExtractionService._first_match(text, r"\bCCI\s*[:=]?\s*(\d{20})\b")
+        account = CvExtractionService._first_match(text, r"(?:cuenta(?:\s+sueldo|\s+bancaria)?|haberes)\s*[:=]?\s*(\d{10,20})\b")
+        if cci and not account:
+            account = cci[:14]
+        return account, cci
 
     @staticmethod
     def _extract_skills(text: str) -> list[str]:
@@ -285,10 +361,20 @@ class CvExtractionService:
 
     @staticmethod
     def _extract_names(text: str) -> tuple[str, str]:
-        match = re.search(r"(?:nombre(?:s)?|postulante)?\s*[:=]?\s*([A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚÑáéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚÑáéíóúñ]+){1,3})", text)
+        anchored = re.search(
+            r"(?:nombre(?:s)?(?:\s+y\s+apellidos)?|postulante)\s*[:=]?\s*([A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚÑáéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚÑáéíóúñ]+){1,4})",
+            text,
+        )
+        match = anchored or re.search(r"\b([A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚÑáéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚÑáéíóúñ]+){2,3})\b", text)
         if not match:
             return "", ""
-        parts = match.group(1).split()
+        raw_name = re.split(
+            r"\b(DNI|Documento|Telefono|Celular|Correo|Email|Direccion|Domicilio)\b",
+            match.group(1),
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )[0]
+        parts = raw_name.split()
         if len(parts) >= 4:
             return " ".join(parts[:2]), " ".join(parts[2:])
         return parts[0], " ".join(parts[1:])
@@ -296,6 +382,85 @@ class CvExtractionService:
     @staticmethod
     def _normalize_address(value: str) -> str:
         return re.sub(r"[^a-z0-9]", "", value.lower())
+
+    @staticmethod
+    def _has_any(text: str, words: list[str]) -> bool:
+        lower_text = text.lower()
+        return any(word.lower() in lower_text for word in words)
+
+    def _build_requirements(self, text: str, draft: WorkerDraft) -> list[dict]:
+        full_name = f"{draft.nombres} {draft.apellidos}".strip()
+
+        def item(requirement_id: str, status: str, evidence: str) -> dict:
+            return {
+                "id": requirement_id,
+                "status": status,
+                "evidence": evidence,
+                "source": "IA_CV",
+            }
+
+        return [
+            item(
+                "copia_dni_vigente",
+                "OBSERVADO" if draft.dni else "PENDIENTE",
+                f"DNI detectado en CV: {draft.dni}" if draft.dni else "No se detecto numero de DNI en el CV.",
+            ),
+            item(
+                "foto_tamano_carne",
+                "OBSERVADO" if self._has_any(text, ["foto", "fotografia", "tamano carne", "tamaño carne"]) else "PENDIENTE",
+                "El texto menciona fotografia/foto tamano carne." if self._has_any(text, ["foto", "fotografia", "tamano carne", "tamaño carne"]) else "Adjuntar foto tamano carne.",
+            ),
+            item(
+                "ficha_datos_personales",
+                "APROBADO" if full_name and draft.dni and (draft.telefono or draft.email) else "OBSERVADO",
+                f"Datos detectados: {full_name or 'sin nombre'}, DNI {draft.dni or 'sin DNI'}, telefono/correo {draft.telefono or draft.email or 'pendiente'}.",
+            ),
+            item(
+                "hoja_vida_documentada",
+                "APROBADO" if draft.experiencia or draft.profesion or draft.habilidades_clave else "OBSERVADO",
+                f"Perfil CV: {draft.profesion or 'cargo pendiente'}; experiencia: {draft.experiencia or 'pendiente'}.",
+            ),
+            item(
+                "constancia_diploma_estudios",
+                "OBSERVADO" if draft.estudios_realizados else "PENDIENTE",
+                draft.estudios_realizados or "No se detectaron constancias o diplomas en el CV.",
+            ),
+            item(
+                "certificados_laborales_anteriores",
+                "OBSERVADO" if draft.experiencia else "PENDIENTE",
+                draft.experiencia or "No se detectaron certificados laborales anteriores.",
+            ),
+            item(
+                "antecedentes_policiales",
+                "OBSERVADO" if self._has_any(text, ["antecedentes policiales", "certificado policial"]) else "PENDIENTE",
+                "El CV menciona antecedente policial." if self._has_any(text, ["antecedentes policiales", "certificado policial"]) else "Adjuntar certificado de antecedentes policiales.",
+            ),
+            item(
+                "antecedentes_penales",
+                "OBSERVADO" if self._has_any(text, ["antecedentes penales", "certificado penal"]) else "PENDIENTE",
+                "El CV menciona antecedente penal." if self._has_any(text, ["antecedentes penales", "certificado penal"]) else "Adjuntar certificado de antecedentes penales.",
+            ),
+            item(
+                "antecedentes_judiciales",
+                "OBSERVADO" if self._has_any(text, ["antecedentes judiciales", "certificado judicial"]) else "PENDIENTE",
+                "El CV menciona antecedente judicial." if self._has_any(text, ["antecedentes judiciales", "certificado judicial"]) else "Adjuntar certificado de antecedentes judiciales.",
+            ),
+            item(
+                "declaracion_jurada_domicilio",
+                "OBSERVADO" if draft.direccion_domicilio else "PENDIENTE",
+                draft.direccion_domicilio or "No se detecto domicilio para declaracion jurada.",
+            ),
+            item(
+                "ficha_afp_onp",
+                "OBSERVADO" if draft.pension_system else "PENDIENTE",
+                f"Sistema pensionario detectado: {draft.pension_system}" if draft.pension_system else "No se detecto AFP/ONP.",
+            ),
+            item(
+                "cuenta_bancaria_haberes",
+                "OBSERVADO" if draft.cuenta_bancaria or draft.cci else "PENDIENTE",
+                f"Cuenta/CCI detectada: {draft.cci or draft.cuenta_bancaria}" if draft.cuenta_bancaria or draft.cci else "No se detecto cuenta bancaria de haberes.",
+            ),
+        ]
 
 
 class LaborContractGenerator:
@@ -317,6 +482,7 @@ class LaborContractGenerator:
         contract_terms = contract_terms or {}
         contract_window = self._contract_window(contract_terms)
         extra_clauses = self._extra_clause_rules(cargo, sueldo)
+        requirements_text = self._requirements_text(contract_terms.get("requirements", []), contract_terms.get("requirement_summary", {}))
         return f"""
 CONTRATO DE TRABAJO - {tipo_contrato.upper()}
 
@@ -352,12 +518,27 @@ Las partes podran firmar digitalmente el presente documento, conservando evidenc
 NOVENA: CLAUSULAS DE CUMPLIMIENTO ADICIONALES.
 {extra_clauses}
 
-DECIMA: CONTEXTO LEGAL RAG CONSULTADO.
+DECIMA: EXPEDIENTE DOCUMENTARIO DE CONTRATACION.
+{requirements_text}
+
+DECIMA PRIMERA: CONTEXTO LEGAL RAG CONSULTADO.
 {legal_notes}
 """
 
-    def generate_pdf_base64(self, worker: dict, tipo_contrato: str) -> str:
-        text = self.generate_contract_text(worker, tipo_contrato)
+    def generate_pdf_base64(
+        self,
+        worker: dict,
+        tipo_contrato: str,
+        *,
+        legal_context: list[dict] | None = None,
+        contract_terms: dict | None = None,
+    ) -> str:
+        text = self.generate_contract_text(
+            worker,
+            tipo_contrato,
+            legal_context=legal_context,
+            contract_terms=contract_terms,
+        )
         buffer = io.BytesIO()
         doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=1.7 * cm, leftMargin=1.7 * cm, topMargin=1.6 * cm, bottomMargin=1.4 * cm)
         styles = getSampleStyleSheet()
@@ -448,6 +629,10 @@ DECIMA: CONTEXTO LEGAL RAG CONSULTADO.
             "04_Alertas_Contador.txt": due_text.encode("utf-8"),
             "05_Contexto_Legal_Citado.txt": self._legal_notes(legal_context).encode("utf-8"),
             "06_Contrato_Texto.txt": contract_text.encode("utf-8"),
+            "07_Requisitos_Contratacion.txt": self._requirements_text(
+                contract_terms.get("requirements", []),
+                contract_terms.get("requirement_summary", {}),
+            ).encode("utf-8"),
         }
 
         zip_buffer = io.BytesIO()
@@ -509,6 +694,30 @@ DECIMA: CONTEXTO LEGAL RAG CONSULTADO.
             title = metadata.get("title") or "Documento legal"
             snippet = str(row.get("content") or "").strip().replace("\n", " ")[:220]
             lines.append(f"{idx}. [{source}] {title}: {snippet}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _requirements_text(requirements: list[dict], summary: dict | None = None) -> str:
+        summary = summary or {}
+        if not requirements:
+            return "Expediente documentario no informado; RRHH debe completar checklist antes de la firma."
+
+        lines = [
+            (
+                "Resumen: "
+                f"total={summary.get('total', len(requirements))}, "
+                f"aprobados={summary.get('approved', 0)}, "
+                f"observados={summary.get('observed', 0)}, "
+                f"pendientes={summary.get('pending', 0)}."
+            )
+        ]
+        for index, item in enumerate(requirements, start=1):
+            category = item.get("category") or "General"
+            name = item.get("name") or item.get("id") or "Requisito"
+            status = item.get("status") or "PENDIENTE"
+            required = "obligatorio" if item.get("required") else "opcional"
+            evidence = str(item.get("evidence") or "").strip() or "Sin evidencia registrada."
+            lines.append(f"{index}. [{category}] {name} - {status} ({required}). Evidencia: {evidence}")
         return "\n".join(lines)
 
     @staticmethod

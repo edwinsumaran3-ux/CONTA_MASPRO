@@ -22,7 +22,7 @@ import {
   Wallet24Regular,
 } from '@fluentui/react-icons';
 import { SidePanel } from '../../components/ui/SidePanel';
-import { SaleFormEnterprise } from './SaleFormEnterprise';
+import { SaleFormEnterprise, type SaleFormData, type SaleSubmitPayload } from './SaleFormEnterprise';
 import { TenantSelector } from '../../components/layout/TenantSelector';
 import { MassiveUpload } from './MassiveUpload';
 import { PurchaseFormEnterprise, type PurchaseSubmitPayload } from './PurchaseFormEnterprise';
@@ -87,6 +87,7 @@ type PurchaseForm = {
   costCenter: string;
 };
 
+
 type ChecklistState = {
   conciliacionBancos: boolean;
   validarIgv: boolean;
@@ -105,12 +106,48 @@ type Filters = {
   sourceModule: string;
 };
 
+type ValidatorStatus = 'OK' | 'DESCUADRADO' | 'CC_REQUERIDO';
+
+type EntrySummary = {
+  entryId: string;
+  date: string;
+  period: string;
+  description: string;
+  sourceModule: string;
+  status: string;
+  hash: string;
+  previousHash?: string;
+  totalDebit: number;
+  totalCredit: number;
+  variance: number;
+  validatorStatus: ValidatorStatus;
+  missingCostCenters: string[];
+  lines: JournalRow[];
+};
+
+type EnrichedRow = JournalRow & {
+  validatorStatus: ValidatorStatus;
+  variance: number;
+  missingCostCenter: boolean;
+};
+
+type DisplayRow =
+  | { kind: 'GROUP'; summary: EntrySummary; expanded: boolean }
+  | { kind: 'LINE'; row: EnrichedRow };
+
+type QuickFilters = {
+  missingCostCenter: boolean;
+  unbalanced: boolean;
+  manualOnly: boolean;
+};
+
 const API_BASE = '/api/v1';
 const HR_API_BASE = 'http://127.0.0.1:8001/api/v1';
 const TENANT_ID = '11111111-1111-1111-1111-111111111111';
 const USER_ID = 'erp.operator';
 const MAX_JOURNAL_ROWS = 3000;
 const MAX_RENDER_ROWS = 1200;
+const USE_DEMO_ROWS = false;
 
 const getTenantId = () => localStorage.getItem('tenant_id') || '11111111-1111-1111-1111-111111111111';
 
@@ -153,6 +190,20 @@ const seedRows: JournalRow[] = [
   { id: 'JE-2026-000180', date: '2026-05-08', period: '2026-05', description: 'Provision cobranza dudosa', account: '684', costCenter: 'FIN-CXC', debit: '1,540.00', credit: '0.00', status: 'REVIEW', hash: 'b41c9e310a946145', sourceModule: 'CXC/CXP' },
 ];
 
+const emptyJournalRow: JournalRow = {
+  id: 'EMPTY-JOURNAL-SELECTION',
+  date: '',
+  period: '',
+  description: 'Sin asientos devueltos por la base de datos para el periodo consultado',
+  account: 'N/A',
+  costCenter: '-',
+  debit: '0.00',
+  credit: '0.00',
+  status: 'SIN_DATOS',
+  hash: '',
+  sourceModule: 'BASE_DATOS',
+};
+
 const metricCards = [
   ['Caja', 'S/ 482,900.00'],
   ['CXC', 'S/ 1,284,320.10'],
@@ -177,8 +228,32 @@ const railItems = [
 ];
 
 const toNumber = (value: string | number | undefined | null) => {
-  const parsed = Number.parseFloat(String(value ?? '0').replace(',', '.'));
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : 0;
+  }
+  const raw = String(value ?? '0').replace(/[^0-9,.\-]/g, '');
+  const normalized = raw.includes(',') && !raw.includes('.') ? raw.replace(',', '.') : raw.replace(/,/g, '');
+  const parsed = Number.parseFloat(normalized);
   return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const VARIANCE_TOLERANCE = 0.05;
+const ACCOUNT_CLASSES_NEEDING_CC = new Set(['6', '9']);
+
+const requiresCostCenter = (accountCode: string | undefined | null) => {
+  const first = String(accountCode || '').trim().charAt(0);
+  return ACCOUNT_CLASSES_NEEDING_CC.has(first);
+};
+
+const isCostCenterEmpty = (cc: string | undefined | null) => {
+  const value = String(cc || '').trim().toUpperCase();
+  return value === '' || value === '-' || value === 'N/A' || value === 'NA';
+};
+
+const validatorBadge = (status: ValidatorStatus, variance: number) => {
+  if (status === 'OK') return { label: 'VALIDADO', symbol: '✓', cls: 'ok' };
+  if (status === 'DESCUADRADO') return { label: `DESC ${variance.toFixed(2)}`, symbol: '✖', cls: 'descuadrado' };
+  return { label: 'CC FALTA', symbol: '⚠', cls: 'cc_requerido' };
 };
 
 const toCsv = (data: Array<Record<string, unknown>>) => {
@@ -205,8 +280,8 @@ const downloadFile = (filename: string, content: string, type: string) => {
 
 export const EnterpriseWorkspace = () => {
   
-  const [rows, setRows] = useState<JournalRow[]>(seedRows);
-  const [selectedRow, setSelectedRow] = useState<JournalRow>(seedRows[0]);
+  const [rows, setRows] = useState<JournalRow[]>(USE_DEMO_ROWS ? seedRows : []);
+  const [selectedRow, setSelectedRow] = useState<JournalRow>(USE_DEMO_ROWS ? seedRows[0] : emptyJournalRow);
   const [token, setToken] = useState('');
   const [loading, setLoading] = useState(true);
   const [railExpanded, setRailExpanded] = useState(false);
@@ -219,6 +294,16 @@ export const EnterpriseWorkspace = () => {
   const [accountDetailOpen, setAccountDetailOpen] = useState(false);
   const bootstrapRanRef = useRef(false);
 
+  const [saleForm, setSaleForm] = useState<SaleFormData>({
+    serie: 'F001',
+    number: '8421',
+    customerRuc: '20600123456',
+    subtotal: '16000.00',
+    igv: '2880.00',
+    revenueAccount: '704101',
+    costCenter: 'LIM-COM',
+  });
+
   const [purchaseForm, setPurchaseForm] = useState<PurchaseForm>({
     serie: 'E001',
     number: '558',
@@ -228,6 +313,7 @@ export const EnterpriseWorkspace = () => {
     expenseAccount: '6011',
     costCenter: 'LIM-ADM',
   });
+
 
   const [checklist, setChecklist] = useState<ChecklistState>({
     conciliacionBancos: true,
@@ -247,25 +333,152 @@ export const EnterpriseWorkspace = () => {
     sourceModule: '',
   });
 
+  const [viewMode, setViewMode] = useState<'FLAT' | 'GROUPED'>('FLAT');
+  const [expandedEntries, setExpandedEntries] = useState<Set<string>>(new Set());
+  const [quickFilters, setQuickFilters] = useState<QuickFilters>({
+    missingCostCenter: false,
+    unbalanced: false,
+    manualOnly: false,
+  });
+
+  const toggleEntryExpansion = (entryId: string) => {
+    setExpandedEntries((prev) => {
+      const next = new Set(prev);
+      if (next.has(entryId)) {
+        next.delete(entryId);
+      } else {
+        next.add(entryId);
+      }
+      return next;
+    });
+  };
+
   const totals = useMemo(() => ({
     entries: rows.length,
     locked: rows.filter((row) => row.status !== 'REVIEW').length,
   }), [rows]);
 
-  const filteredRows = useMemo(() => {
-    const contains = (value: string, needle: string) => value.toLowerCase().includes(needle.toLowerCase());
-    return rows.filter((row) =>
-      contains(row.date, filters.date)
-      && contains(row.period, filters.period)
-      && contains(row.description, filters.description)
-      && contains(row.account, filters.account)
-      && contains(row.costCenter, filters.costCenter)
-      && contains(row.status, filters.status)
-      && contains(row.sourceModule, filters.sourceModule),
-    );
-  }, [rows, filters]);
+  const entriesIndex = useMemo(() => {
+    const map = new Map<string, EntrySummary>();
+    for (const row of rows) {
+      const key = row.entryId ?? row.id;
+      let entry = map.get(key);
+      if (!entry) {
+        entry = {
+          entryId: key,
+          date: row.date,
+          period: row.period,
+          description: row.description,
+          sourceModule: row.sourceModule,
+          status: row.status,
+          hash: row.hash,
+          previousHash: row.previousHash,
+          totalDebit: 0,
+          totalCredit: 0,
+          variance: 0,
+          validatorStatus: 'OK',
+          missingCostCenters: [],
+          lines: [],
+        };
+        map.set(key, entry);
+      }
+      entry.lines.push(row);
+      entry.totalDebit += toNumber(row.debit);
+      entry.totalCredit += toNumber(row.credit);
+      if (requiresCostCenter(row.account) && isCostCenterEmpty(row.costCenter)) {
+        entry.missingCostCenters.push(row.account);
+      }
+    }
+    for (const entry of map.values()) {
+      entry.variance = Math.round((entry.totalDebit - entry.totalCredit) * 100) / 100;
+      if (Math.abs(entry.variance) > VARIANCE_TOLERANCE) {
+        entry.validatorStatus = 'DESCUADRADO';
+      } else if (entry.missingCostCenters.length > 0) {
+        entry.validatorStatus = 'CC_REQUERIDO';
+      } else {
+        entry.validatorStatus = 'OK';
+      }
+    }
+    return map;
+  }, [rows]);
 
-  const visibleRows = useMemo(() => filteredRows.slice(0, MAX_RENDER_ROWS), [filteredRows]);
+  const entriesStats = useMemo(() => {
+    let ok = 0;
+    let desc = 0;
+    let ccReq = 0;
+    for (const entry of entriesIndex.values()) {
+      if (entry.validatorStatus === 'OK') ok++;
+      else if (entry.validatorStatus === 'DESCUADRADO') desc++;
+      else if (entry.validatorStatus === 'CC_REQUERIDO') ccReq++;
+    }
+    return { total: entriesIndex.size, ok, desc, ccReq };
+  }, [entriesIndex]);
+
+  const filteredRowsEnhanced = useMemo<EnrichedRow[]>(() => {
+    const contains = (value: string, needle: string) => value.toLowerCase().includes(needle.toLowerCase());
+    const result: EnrichedRow[] = [];
+    for (const row of rows) {
+      const summary = entriesIndex.get(row.entryId ?? row.id);
+      const validatorStatus = summary?.validatorStatus ?? 'OK';
+      const variance = summary?.variance ?? 0;
+      const missingCC = requiresCostCenter(row.account) && isCostCenterEmpty(row.costCenter);
+
+      if (!contains(row.date, filters.date)) continue;
+      if (!contains(row.period, filters.period)) continue;
+      if (!contains(row.description, filters.description)) continue;
+      if (!contains(row.account, filters.account)) continue;
+      if (!contains(row.costCenter, filters.costCenter)) continue;
+      if (!contains(row.status, filters.status)) continue;
+      if (!contains(row.sourceModule, filters.sourceModule)) continue;
+
+      if (quickFilters.missingCostCenter && !missingCC) continue;
+      if (quickFilters.unbalanced && validatorStatus !== 'DESCUADRADO') continue;
+      if (quickFilters.manualOnly) {
+        const mod = String(row.sourceModule || '').toUpperCase();
+        if (mod !== 'CONTABILIDAD' && mod !== 'MANUAL' && mod !== 'AJUSTES') continue;
+      }
+
+      result.push({ ...row, validatorStatus, variance, missingCostCenter: missingCC });
+    }
+    return result;
+  }, [rows, filters, quickFilters, entriesIndex]);
+
+  const filteredRows = filteredRowsEnhanced;
+
+  const displayRows = useMemo<DisplayRow[]>(() => {
+    if (viewMode === 'FLAT') {
+      return filteredRowsEnhanced.slice(0, MAX_RENDER_ROWS).map((row) => ({ kind: 'LINE' as const, row }));
+    }
+    const seen = new Set<string>();
+    const result: DisplayRow[] = [];
+    for (const row of filteredRowsEnhanced) {
+      const key = row.entryId ?? row.id;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const summary = entriesIndex.get(key);
+      if (!summary) continue;
+      const expanded = expandedEntries.has(key);
+      result.push({ kind: 'GROUP', summary, expanded });
+      if (expanded) {
+        for (const line of summary.lines) {
+          const missingCC = requiresCostCenter(line.account) && isCostCenterEmpty(line.costCenter);
+          result.push({
+            kind: 'LINE',
+            row: { ...line, validatorStatus: summary.validatorStatus, variance: summary.variance, missingCostCenter: missingCC },
+          });
+        }
+      }
+      if (result.length >= MAX_RENDER_ROWS) break;
+    }
+    return result;
+  }, [filteredRowsEnhanced, viewMode, expandedEntries, entriesIndex]);
+
+  const visibleRows = useMemo(() => filteredRowsEnhanced.slice(0, MAX_RENDER_ROWS), [filteredRowsEnhanced]);
+
+  const selectedSummary = useMemo(() => {
+    if (!selectedRow) return undefined;
+    return entriesIndex.get(selectedRow.entryId ?? selectedRow.id);
+  }, [selectedRow, entriesIndex]);
 
   const authHeaders = (bearerToken: string, tenantId = TENANT_ID) => ({
     Authorization: `Bearer ${bearerToken}`,
@@ -286,11 +499,12 @@ export const EnterpriseWorkspace = () => {
     return payload.access_token as string;
   };
 
-  const loadJournal = async (bearerToken: string) => {
+  const loadJournal = async (bearerToken: string, period = { year: 2026, month: 5 }) => {
     const tenantId = getTenantId();
-    const response = await fetch(`${API_BASE}/ledger/journal?year=2026&month=5&limit=250`, {
+    const response = await fetch(`${API_BASE}/ledger/journal?year=${period.year}&month=${period.month}&limit=250`, {
       headers: authHeaders(bearerToken, tenantId),
     });
+
     if (!response.ok) {
       throw new Error('No se pudo consultar libro diario');
     }
@@ -298,12 +512,12 @@ export const EnterpriseWorkspace = () => {
     const payload = await response.json();
     const payloadRows = Array.isArray(payload) ? payload.slice(0, MAX_JOURNAL_ROWS) : [];
 
-    const mapped = payloadRows.flatMap((item, entryIndex) => {
-      const lines = Array.isArray(item.lines) ? item.lines : [];
+    const mapped = payloadRows.flatMap((item: any, entryIndex: number) => {
+      const lines: JournalLineDetail[] = Array.isArray(item.lines) ? (item.lines as JournalLineDetail[]) : [];
       const base = {
         entryId: item.id ?? `JE-${entryIndex + 1}`,
         date: item.entry_date ?? '2026-05-01',
-        period: item.period || '2026-05',
+        period: item.period || `${period.year}-${String(period.month).padStart(2, '0')}`,
         description: item.description || 'Sin descripcion',
         status: statusLabel(item.sunat_status ?? item.status),
         hash: item.row_hash ?? 'sin-hash',
@@ -339,12 +553,25 @@ export const EnterpriseWorkspace = () => {
       }));
     });
 
-    const resultRows = mapped.length ? mapped : seedRows;
+    const resultRows = mapped.length > 0 || !USE_DEMO_ROWS ? mapped : seedRows;
+
+    console.info('CONTA_PRO SELECT /ledger/journal despues de cargar:', {
+      endpoint: `${API_BASE}/ledger/journal`,
+      tenant_id: tenantId,
+      period,
+      rows: resultRows.length,
+      sample: resultRows.slice(0, 5),
+      demo_mode: USE_DEMO_ROWS && mapped.length === 0,
+    });
+
     setRows(resultRows);
-    setSelectedRow(resultRows[0]);
+    setSelectedRow(resultRows[0] ?? emptyJournalRow);
+
     if (Array.isArray(payload) && payload.length > MAX_JOURNAL_ROWS) {
       setStatusMessage(`Libro diario truncado a ${MAX_JOURNAL_ROWS} asientos para proteger rendimiento.`);
     }
+
+    return resultRows;
   };
 
   useEffect(() => {
@@ -368,9 +595,14 @@ export const EnterpriseWorkspace = () => {
         if (cancelled) {
           return;
         }
-        setRows(seedRows);
-        setSelectedRow(seedRows[0]);
-        setStatusMessage('Backend no disponible. Modo local operativo.');
+        const fallbackRows = USE_DEMO_ROWS ? seedRows : [];
+        setRows(fallbackRows);
+        setSelectedRow(fallbackRows[0] ?? emptyJournalRow);
+        setStatusMessage(
+          USE_DEMO_ROWS
+            ? 'Backend no disponible. Modo local operativo.'
+            : 'Backend no disponible. No se muestran datos de prueba; revise conexion/API para ver datos persistidos.'
+        );
         setAiMessage('Motor IA sin conexion.');
       } finally {
         if (!cancelled) {
@@ -385,6 +617,94 @@ export const EnterpriseWorkspace = () => {
   }, []);
 
    
+  const postSale = async (salePayload: SaleSubmitPayload) => {
+    const tenantId = getTenantId();
+
+    try {
+      const formSource = salePayload.form;
+      const subtotal = toNumber(salePayload.subtotal ?? formSource.subtotal);
+      const igv = toNumber(salePayload.igv ?? formSource.igv);
+      const total = toNumber(salePayload.total ?? subtotal + igv);
+
+      const payload = {
+        tenant_id: tenantId,
+        year: 2026,
+        month: 5,
+        invoice_id: `${formSource.serie}-${formSource.number}`,
+        customer_ruc: formSource.customerRuc,
+        customer_name: salePayload.customerName,
+        entry_date: salePayload.issueDate || new Date().toISOString().slice(0, 10),
+        doc_type: '01',
+        serie: formSource.serie,
+        number: formSource.number,
+        subtotal,
+        igv,
+        total,
+        currency: 'PEN',
+        revenue_account: formSource.revenueAccount || salePayload.accountLines[0]?.accountCode || '704101',
+        cost_center: formSource.costCenter || salePayload.accountLines[0]?.costCenter || 'LIM-COM',
+        line_items: salePayload.items.map((item) => ({
+          product_code: item.code,
+          description: item.description,
+          unit: item.unit,
+          quantity: toNumber(item.quantity),
+          unit_price: toNumber(item.unitPrice),
+          line_subtotal: toNumber(item.lineSubtotal),
+        })),
+        audit_metadata: {
+          ...salePayload.auditMetadata,
+          items: salePayload.items,
+          account_lines: salePayload.accountLines,
+          accounts_to_upsert: salePayload.accountsToUpsert,
+          cost_centers_to_upsert: salePayload.costCentersToUpsert,
+          guide_remission: salePayload.guideRemission,
+        },
+      };
+
+      console.log('CONTA_PRO salePayload:', salePayload);
+      console.log('CONTA_PRO invoice payload:', payload);
+
+      const saleToken = token || await requestDevToken();
+
+      if (!saleToken) {
+        throw new Error('No hay token de seguridad para registrar venta.');
+      }
+
+      const response = await fetch(`${API_BASE}/ledger/invoice`, {
+        method: 'POST',
+        headers: authHeaders(saleToken, tenantId),
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Error invoice:', errorText);
+        throw new Error(errorText);
+      }
+
+      const postedMessage = `Venta ${formSource.serie}-${formSource.number} posteada con cuentas y centros de costo.`;
+      setStatusMessage(postedMessage);
+      setToken(saleToken);
+
+      try {
+        await loadJournal(saleToken);
+        setActivePanel(null);
+      } catch (journalError) {
+        console.warn('CONTA_PRO loadJournal after sale warning:', journalError);
+        setStatusMessage(
+          `${postedMessage} Pendiente refrescar Libro Diario: ${
+            journalError instanceof Error ? journalError.message : 'error desconocido'
+          }`
+        );
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Error desconocido al postear venta.';
+      console.error('CONTA_PRO postSale error:', error);
+      setStatusMessage(`No se pudo postear venta. ${message}`);
+      throw error;
+    }
+  };
+
   const postPurchase = async (purchasePayload?: PurchaseSubmitPayload) => {
     const tenantId = getTenantId();
 
@@ -506,10 +826,24 @@ export const EnterpriseWorkspace = () => {
         throw new Error(errorText);
       }
 
-      setStatusMessage(`Compra ${formSource.serie}-${formSource.number} posteada con cuentas y centros de costo.`);
-      setActivePanel(null);
+      const postedMessage = `Compra ${formSource.serie}-${formSource.number} posteada con cuentas y centros de costo.`;
+      setStatusMessage(postedMessage);
       setToken(purchaseToken);
-      await loadJournal(purchaseToken);
+
+      // CONTA_PRO FIX V15:
+      // La compra ya fue posteada. Si falla refrescar el Libro Diario,
+      // no convertirlo en error de compra ni cerrar la tabla.
+      try {
+        await loadJournal(purchaseToken);
+        setActivePanel(null);
+      } catch (journalError) {
+        console.warn('CONTA_PRO loadJournal after purchase warning:', journalError);
+        setStatusMessage(
+          `${postedMessage} Pendiente refrescar Libro Diario: ${
+            journalError instanceof Error ? journalError.message : 'error desconocido'
+          }`
+        );
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Error desconocido al postear compra.';
       console.error('CONTA_PRO postPurchase error:', error);
@@ -519,7 +853,7 @@ export const EnterpriseWorkspace = () => {
   };
 
   const exportExcel = () => {
-    const csv = toCsv(rows.map((row) => ({
+    const csv = toCsv(filteredRowsEnhanced.map((row) => ({
       asiento: row.id,
       fecha: row.date,
       periodo: row.period,
@@ -542,7 +876,9 @@ export const EnterpriseWorkspace = () => {
       setStatusMessage('La ventana de exportacion PDF fue bloqueada por el navegador.');
       return;
     }
-    const lines = filteredRows.slice(0, 30).map((row) => `<tr><td>${row.date}</td><td>${row.period}</td><td>${row.description}</td><td style="text-align:right">${row.debit}</td><td style="text-align:right">${row.credit}</td></tr>`).join('');
+
+    const lines = filteredRowsEnhanced.slice(0, 30).map((row) => `<tr><td>${row.date}</td><td>${row.period}</td><td>${row.description}</td><td style="text-align:right">${row.debit}</td><td style="text-align:right">${row.credit}</td></tr>`).join('');
+
     preview.document.write(`
       <html>
         <head><title>Reporte Diario</title></head>
@@ -608,14 +944,24 @@ export const EnterpriseWorkspace = () => {
       : 'Checklist de Cierre';
 
   const refreshJournal = async () => {
-    if (token) {
-      await loadJournal(token);
+    try {
+      const currentToken = token || await requestDevToken();
+      if (!token) setToken(currentToken);
+      await loadJournal(currentToken);
       setStatusMessage('Asientos actualizados desde backend.');
-      return;
+    } catch (error) {
+      console.warn('CONTA_PRO refreshJournal warning:', error);
+      const fallbackRows = USE_DEMO_ROWS ? seedRows : [];
+      setRows(fallbackRows);
+      setSelectedRow(fallbackRows[0] ?? emptyJournalRow);
+      setStatusMessage(
+        USE_DEMO_ROWS
+          ? 'Backend no disponible. Modo local operativo.'
+          : `No se pudo refrescar desde backend. No se muestran datos de prueba. ${
+              error instanceof Error ? error.message : 'Error desconocido'
+            }`
+      );
     }
-    setRows(seedRows);
-    setSelectedRow(seedRows[0]);
-    setStatusMessage('Asientos actualizados en modo local.');
   };
 
   const renderPrimaryView = () => {
@@ -660,6 +1006,44 @@ export const EnterpriseWorkspace = () => {
           <PeriodCloseAction />
           <div className="mt-4 unified-accounting-view">
             <section className="grid-shell enterprise-neo-card unified-accounting-main">
+              <div className="enterprise-toolbar">
+                <div className="enterprise-toolbar-modes">
+                  <Button
+                    size="small"
+                    appearance={viewMode === 'FLAT' ? 'primary' : 'subtle'}
+                    onClick={() => setViewMode('FLAT')}
+                  >Desagregada</Button>
+                  <Button
+                    size="small"
+                    appearance={viewMode === 'GROUPED' ? 'primary' : 'subtle'}
+                    onClick={() => setViewMode('GROUPED')}
+                  >Agrupada por asiento</Button>
+                </div>
+                <div className="enterprise-toolbar-quickfilters">
+                  <Checkbox
+                    label="Solo 6/9 sin CC"
+                    checked={quickFilters.missingCostCenter}
+                    onChange={(_, data) => setQuickFilters((p) => ({ ...p, missingCostCenter: !!data.checked }))}
+                  />
+                  <Checkbox
+                    label="Solo descuadrados"
+                    checked={quickFilters.unbalanced}
+                    onChange={(_, data) => setQuickFilters((p) => ({ ...p, unbalanced: !!data.checked }))}
+                  />
+                  <Checkbox
+                    label="Solo manuales"
+                    checked={quickFilters.manualOnly}
+                    onChange={(_, data) => setQuickFilters((p) => ({ ...p, manualOnly: !!data.checked }))}
+                  />
+                </div>
+                <div className="enterprise-toolbar-stats">
+                  <span>Asientos: <strong>{entriesStats.total}</strong></span>
+                  <span className="status-ok-text">✓ {entriesStats.ok}</span>
+                  <span className="status-desc-text">✖ {entriesStats.desc}</span>
+                  <span className="status-ccreq-text">⚠ {entriesStats.ccReq}</span>
+                </div>
+              </div>
+
               <div className="grid-header-row sticky-top enterprise-table-header">
                 <span>Fecha</span>
                 <span>Periodo</span>
@@ -694,25 +1078,58 @@ export const EnterpriseWorkspace = () => {
                 </div>
               ) : (
                 <div className="grid-body erp-scroll">
-                  {visibleRows.map((row, idx) => (
-                    <button
-                      key={row.id}
-                      type="button"
-                      className={`grid-row enterprise-row-hover ${idx % 2 === 1 ? 'alt' : ''} ${row.id === selectedRow.id ? 'selected' : ''}`}
-                      onClick={() => setSelectedRow(row)}
-                    >
-                      <span>{row.date}</span>
-                      <span>{row.period}</span>
-                      <span className="truncate">{row.description}</span>
-                      <span title={row.accountName || row.account}>{row.account}</span>
-                      <span>{row.costCenter}</span>
-                      <span className="money">{row.debit}</span>
-                      <span className="money">{row.credit}</span>
-                      <span>{row.status}</span>
-                      <span>{row.sourceModule}</span>
-                      <span className="hash truncate">{row.hash}</span>
-                    </button>
-                  ))}
+                  {displayRows.map((entry, idx) => {
+                    if (entry.kind === 'GROUP') {
+                      const s = entry.summary;
+                      const badge = validatorBadge(s.validatorStatus, s.variance);
+                      return (
+                        <button
+                          key={`grp-${s.entryId}`}
+                          type="button"
+                          className={`grid-row grid-row-group row-status-${badge.cls}`}
+                          onClick={() => toggleEntryExpansion(s.entryId)}
+                          title={s.validatorStatus === 'DESCUADRADO' ? `Varianza S/ ${s.variance.toFixed(2)}` : ''}
+                        >
+                          <span>{entry.expanded ? '▼' : '▶'} {s.date}</span>
+                          <span>{s.period}</span>
+                          <span className="truncate"><strong>{s.entryId.slice(0, 8)}</strong> · {s.description}</span>
+                          <span>—</span>
+                          <span>—</span>
+                          <span className="money">{formatMoney(s.totalDebit.toFixed(2))}</span>
+                          <span className="money">{formatMoney(s.totalCredit.toFixed(2))}</span>
+                          <span className={`validator-badge validator-${badge.cls}`}>{badge.symbol} {badge.label}</span>
+                          <span>{s.sourceModule}</span>
+                          <span className="hash truncate">{(s.hash || '').slice(0, 12)}</span>
+                        </button>
+                      );
+                    }
+                    const row = entry.row;
+                    const badge = validatorBadge(row.validatorStatus, row.variance);
+                    return (
+                      <button
+                        key={row.id}
+                        type="button"
+                        className={`grid-row enterprise-row-hover row-status-${badge.cls} ${idx % 2 === 1 ? 'alt' : ''} ${row.id === selectedRow.id ? 'selected' : ''}`}
+                        onClick={() => setSelectedRow(row)}
+                      >
+                        <span>{row.date}</span>
+                        <span>{row.period}</span>
+                        <span className="truncate">{row.description}</span>
+                        <span title={row.accountName || row.account}>{row.account}</span>
+                        <span className={row.missingCostCenter ? 'cc-warning' : ''}>{row.costCenter}</span>
+                        <span className="money">{row.debit}</span>
+                        <span className="money">{row.credit}</span>
+                        <span>{row.status}</span>
+                        <span>{row.sourceModule}</span>
+                        <span className="hash truncate">{row.hash}</span>
+                      </button>
+                    );
+                  })}
+                  {displayRows.length === 0 && (
+                    <div style={{ padding: 16, color: '#64748b', fontSize: 13 }}>
+                      Sin asientos devueltos por la base de datos para el periodo consultado.
+                    </div>
+                  )}
                 </div>
               )}
             </section>
@@ -720,8 +1137,22 @@ export const EnterpriseWorkspace = () => {
             <aside className="enterprise-neo-card unified-accounting-side">
               <h3 className="unified-analytic-title">DETALLE ANALITICO</h3>
               <div className="unified-analytic-box">
-                {selectedRow ? (
+                {selectedRow.id !== emptyJournalRow.id ? (
                   <div className="unified-analytic-content">
+                    {selectedSummary && (() => {
+                      const badge = validatorBadge(selectedSummary.validatorStatus, selectedSummary.variance);
+                      return (
+                        <div className={`validator-panel validator-${badge.cls}`}>
+                          <strong>{badge.symbol} {badge.label}</strong>
+                          <span>Debe total: <b className="money">{formatMoney(selectedSummary.totalDebit.toFixed(2))}</b></span>
+                          <span>Haber total: <b className="money">{formatMoney(selectedSummary.totalCredit.toFixed(2))}</b></span>
+                          <span>Varianza: <b className="money">{selectedSummary.variance.toFixed(2)}</b></span>
+                          {selectedSummary.missingCostCenters.length > 0 && (
+                            <span className="cc-warning">CC faltante en: {Array.from(new Set(selectedSummary.missingCostCenters)).join(', ')}</span>
+                          )}
+                        </div>
+                      );
+                    })()}
                     <p><strong>Asiento:</strong> {selectedRow.entryId || selectedRow.id}</p>
                     <p><strong>Fecha:</strong> {selectedRow.date}</p>
                     <p><strong>Periodo:</strong> {selectedRow.period}</p>
@@ -736,7 +1167,42 @@ export const EnterpriseWorkspace = () => {
                       <p><strong>Documento:</strong> {selectedRow.documentSeries}-{selectedRow.documentNumber}</p>
                     )}
                     {selectedRow.partnerRuc && <p><strong>RUC:</strong> {selectedRow.partnerRuc}</p>}
-                    <p className="unified-hash-line"><strong>HASH:</strong> {selectedRow.hash}</p>
+
+                    <div className="forensic-section">
+                      <strong>Integridad criptografica</strong>
+                      <p className="unified-hash-line"><span className="hash-label">Anterior:</span> <span className="hash">{(selectedRow.previousHash || '').slice(0, 24) || '—'}</span></p>
+                      <p className="unified-hash-line"><span className="hash-label">Actual:</span> <span className="hash">{(selectedRow.hash || '').slice(0, 24) || '—'}</span></p>
+                      <span className="chain-badge">⛓ Cadena hash-link verificable</span>
+                    </div>
+
+                    {selectedSummary && selectedSummary.lines.length > 0 && (
+                      <div className="t-contable">
+                        <strong>T-Contable</strong>
+                        <div className="t-contable-grid">
+                          <div className="t-contable-col">
+                            <div className="t-contable-head">DEBE</div>
+                            {selectedSummary.lines.filter((l) => toNumber(l.debit) > 0).map((line, idx) => (
+                              <div className="t-contable-line" key={`d-${idx}`}>
+                                <span>{line.account} {line.accountName ? `· ${line.accountName.slice(0, 28)}` : ''}</span>
+                                <span className="money">{line.debit}</span>
+                              </div>
+                            ))}
+                            <div className="t-contable-total"><span>Total Debe</span><span className="money">{formatMoney(selectedSummary.totalDebit.toFixed(2))}</span></div>
+                          </div>
+                          <div className="t-contable-col">
+                            <div className="t-contable-head">HABER</div>
+                            {selectedSummary.lines.filter((l) => toNumber(l.credit) > 0).map((line, idx) => (
+                              <div className="t-contable-line" key={`h-${idx}`}>
+                                <span>{line.account} {line.accountName ? `· ${line.accountName.slice(0, 28)}` : ''}</span>
+                                <span className="money">{line.credit}</span>
+                              </div>
+                            ))}
+                            <div className="t-contable-total"><span>Total Haber</span><span className="money">{formatMoney(selectedSummary.totalCredit.toFixed(2))}</span></div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
                     {selectedRow.lines && selectedRow.lines.length > 0 && (
                       <div style={{ marginTop: 12 }}>
                         <strong>Lineas del asiento</strong>
@@ -751,15 +1217,18 @@ export const EnterpriseWorkspace = () => {
                             </tr>
                           </thead>
                           <tbody>
-                            {selectedRow.lines.map((line, index) => (
-                              <tr key={`${line.account_code}-${index}`}>
-                                <td>{line.account_code || 'N/A'}</td>
-                                <td>{line.account_name || ''}</td>
-                                <td>{line.cost_center || '-'}</td>
-                                <td style={{ textAlign: 'right' }}>{formatMoney(line.debit ?? '0.00')}</td>
-                                <td style={{ textAlign: 'right' }}>{formatMoney(line.credit ?? '0.00')}</td>
-                              </tr>
-                            ))}
+                            {selectedRow.lines.map((line, index) => {
+                              const needsCC = requiresCostCenter(line.account_code) && isCostCenterEmpty(line.cost_center);
+                              return (
+                                <tr key={`${line.account_code}-${index}`}>
+                                  <td>{line.account_code || 'N/A'}</td>
+                                  <td>{line.account_name || ''}</td>
+                                  <td className={needsCC ? 'cc-warning' : ''}>{line.cost_center || '-'}</td>
+                                  <td style={{ textAlign: 'right' }} className="money">{formatMoney(line.debit ?? '0.00')}</td>
+                                  <td style={{ textAlign: 'right' }} className="money">{formatMoney(line.credit ?? '0.00')}</td>
+                                </tr>
+                              );
+                            })}
                           </tbody>
                         </table>
                       </div>
@@ -830,6 +1299,11 @@ export const EnterpriseWorkspace = () => {
                 <span className="hash truncate">{row.hash}</span>
               </button>
             ))}
+            {visibleRows.length === 0 && (
+              <div style={{ padding: 16, color: '#64748b', fontSize: 13 }}>
+                Sin asientos devueltos por la base de datos para el periodo consultado.
+              </div>
+            )}
           </div>
         )}
       </section>
@@ -961,11 +1435,11 @@ export const EnterpriseWorkspace = () => {
       >
         {activePanel === 'VENTA' && (
           <SaleFormEnterprise
-            token={token}
-            tenantId={TENANT_ID}
+            form={saleForm}
+            onFormChange={setSaleForm}
+            tenantId={getTenantId()}
             onClose={() => setActivePanel(null)}
-            onPosted={refreshJournal}
-            onStatus={setStatusMessage}
+            onSubmit={postSale}
           />
         )}
 
@@ -1007,4 +1481,3 @@ export const EnterpriseWorkspace = () => {
     </div>
  );
  };
- 

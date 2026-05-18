@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { WarningFilled24Filled, TrendingUp24Filled, AlertUrgent24Filled, CheckmarkCircle24Filled, ArrowUp20Filled, ArrowDown20Filled } from '@fluentui/react-icons';
+import { Warning24Filled, DataTrending24Filled, AlertUrgent24Filled, CheckmarkCircle24Filled, ArrowUp20Filled, ArrowDown20Filled } from '@fluentui/react-icons';
 
 interface KPI {
   label: string;
@@ -481,3 +481,5 @@ export const BusinessIntelligenceHub: React.FC = () => {
     </div>
   );
 };
+
+

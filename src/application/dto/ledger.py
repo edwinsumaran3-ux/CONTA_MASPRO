@@ -45,6 +45,7 @@ class InvoicePostRequest(BaseModel):
     month: int
     invoice_id: str
     customer_ruc: str | None = None
+    customer_name: str | None = None
     doc_type: str = "01"
     serie: str
     number: str
@@ -60,6 +61,8 @@ class InvoicePostRequest(BaseModel):
     percepcion_amount: Decimal = Decimal("0.00")
     retencion_amount: Decimal = Decimal("0.00")
     cost_center: str | None = None
+    revenue_account: str = "7011"
+    audit_metadata: dict | None = None
     xml_raw: str | None = None
     xml_hash: str | None = None
     sunat_validation: dict | None = None
@@ -103,6 +106,7 @@ class JournalEntryResponse(BaseModel):
     previous_hash: str
     total_debit: str
     total_credit: str
+    diagnostics: dict | None = None
 
 class JournalEntryListItem(BaseModel):
     id: str
@@ -116,6 +120,16 @@ class JournalEntryListItem(BaseModel):
     row_hash: str
     previous_hash: str
     sunat_status: str = "PENDING"
+    account_code: str | None = None
+    account_name: str | None = None
+    cost_center: str | None = None
+    lines: list[dict] = Field(default_factory=list)
+    # F2 reinforced fields
+    asiento_num: str | None = None
+    tipo_cambio: str = "1.0000"
+    estado_asiento: str = "VALIDADO"
+    validar_status: str = "OK"
+    tipo_asiento_id: int = 1
 
 class ReportQuery(BaseModel):
     year: int

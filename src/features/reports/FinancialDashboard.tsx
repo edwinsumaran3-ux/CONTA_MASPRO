@@ -32,6 +32,7 @@ const API_BASE = '/api/v1';
 const TENANT_ID = '11111111-1111-1111-1111-111111111111';
 
 type FinancialPack = {
+  period?: string;
   income_statement?: {
     revenue?: string;
     cost?: string;
@@ -288,3 +289,7 @@ export const FinancialDashboard = () => {
     </div>
   );
 };
+
+
+
+

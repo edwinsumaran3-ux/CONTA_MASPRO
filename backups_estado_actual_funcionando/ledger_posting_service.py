@@ -1,0 +1,663 @@
+from __future__ import annotations
+
+from datetime import date, datetime
+from decimal import Decimal
+from uuid import UUID, uuid4
+from src.application.services.expert_accounting_guard import ExpertAccountingGuard
+from src.application.services.sunat_realtime_verifier import SunatRealtimeVerifier
+from src.config import settings
+from src.domain.exceptions import PeriodLockedException, TenantRequiredException, UnbalancedEntryException
+from src.domain.models.accounting import AuditLog, FinancialDocument, JournalEntry, JournalLine, OutboxEvent
+from sqlalchemy import and_, select
+from sqlalchemy.orm import selectinload
+from src.infrastructure.repositories.ledger_repository import LedgerRepository
+
+class LedgerPostingService:
+    def __init__(self, uow_factory, hash_service):
+        self.uow_factory = uow_factory
+        self.hash_service = hash_service
+        self.expert_guard = ExpertAccountingGuard(
+            SunatRealtimeVerifier(
+                ruc_lookup_url=settings.sunat_ruc_lookup_url,
+                cpe_lookup_url=settings.sunat_cpe_lookup_url,
+                token=settings.sunat_lookup_token,
+                timeout_seconds=settings.sunat_realtime_timeout_seconds,
+            ),
+            sunat_enabled=settings.sunat_realtime_guard_enabled,
+            block_on_unavailable=settings.sunat_guard_block_on_unavailable,
+        )
+
+    def _run_expert_guard(self, payload: dict) -> None:
+        if not settings.expert_accounting_enabled:
+            return
+        self.expert_guard.enforce_or_raise(payload)
+
+
+    SYSTEM_USER_UUID = UUID("00000000-0000-0000-0000-000000000001")
+
+    def _actor_uuid(self, value: str | None):
+        """Dev tokens can send user_id='erp.operator'. DB columns are UUID with FK to users.
+        Use the fixed system user UUID that must exist in users.
+        """
+        if not value:
+            return self.SYSTEM_USER_UUID
+        try:
+            return UUID(str(value))
+        except Exception:
+            return self.SYSTEM_USER_UUID
+
+    def _json_safe(self, value):
+        """Convert Decimal/date/datetime/UUID recursively before writing JSONB."""
+        if isinstance(value, Decimal):
+            return str(value)
+        if isinstance(value, (date, datetime)):
+            return value.isoformat()
+        if isinstance(value, UUID):
+            return str(value)
+        if isinstance(value, dict):
+            return {str(k): self._json_safe(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [self._json_safe(v) for v in value]
+        if isinstance(value, tuple):
+            return [self._json_safe(v) for v in value]
+        return value
+
+    def _text(self, value) -> str:
+        return str(value or "").strip()
+
+    def _money_text(self, value) -> str:
+        return str(self._as_decimal(value))
+
+    def _existing_purchase_differences(
+        self,
+        document: FinancialDocument,
+        purchase_data: dict,
+        subtotal: Decimal,
+        igv: Decimal,
+        total: Decimal,
+        issue_date,
+    ) -> dict:
+        metadata = document.metadata_json or {}
+        checks = {
+            "supplier_ruc": (metadata.get("supplier_ruc"), purchase_data.get("supplier_ruc")),
+            "supplier_name": (metadata.get("supplier_name"), purchase_data.get("supplier_name")),
+            "taxable_amount": (str(document.taxable_amount), str(subtotal)),
+            "tax_amount": (str(document.tax_amount), str(igv)),
+            "total_amount": (str(document.total_amount), str(total)),
+            "issue_date": (document.issue_date.isoformat() if document.issue_date else None, issue_date.isoformat() if isinstance(issue_date, date) else str(issue_date)),
+        }
+        differences = {}
+        for key, (old, new) in checks.items():
+            if self._text(old) != self._text(new):
+                differences[key] = {"registrado": old, "nuevo": new}
+        return differences
+
+    def _as_decimal(self, value, default="0.00") -> Decimal:
+        amount = Decimal(str(default if value is None or value == "" else value)).quantize(Decimal("0.01"))
+        return amount
+
+    def _normalize_code(self, value: str | None, fallback: str = "659101") -> str:
+        cleaned = "".join(ch for ch in str(value or "") if ch.isdigit())
+        return cleaned or fallback
+
+    def _account_class(self, code: str) -> str:
+        return (self._normalize_code(code, "0")[:1] or "0")[:2]
+
+    def _statement_for_account(self, code: str) -> str:
+        first = self._normalize_code(code, "0")[:1]
+        if first in {"1", "2", "3", "4", "5"}:
+            return "BALANCE"
+        if first in {"6", "7", "8", "9"}:
+            return "PROFIT_LOSS"
+        return "UNCLASSIFIED"
+
+    def _nature_for_account(self, code: str) -> str:
+        first = self._normalize_code(code, "0")[:1]
+        return "CREDIT" if first in {"2", "3", "4", "5", "7"} else "DEBIT"
+
+    def _requires_cost_center(self, code: str) -> bool:
+        return self._normalize_code(code, "0")[:1] in {"6", "9"}
+
+    async def post_journal(self, payload: dict) -> JournalEntry:
+        tenant_id = payload.get("tenant_id")
+        if not tenant_id:
+            raise TenantRequiredException("tenant_id es obligatorio")
+
+        lines_payload = payload.get("lines") or []
+        if len(lines_payload) < 2:
+            raise UnbalancedEntryException("Un asiento requiere al menos dos lineas")
+
+        self._run_expert_guard(payload)
+
+        async with self.uow_factory(tenant_id) as uow:
+            repo = LedgerRepository(uow.session)
+            period = await repo.get_period_for_update(tenant_id, int(payload["year"]), int(payload["month"]))
+            if not period or period.is_closed:
+                raise PeriodLockedException("Periodo contable bloqueado")
+
+            company_id = payload.get("company_id")
+            lines = [
+                JournalLine(
+                    id=uuid4(),
+                    tenant_id=tenant_id,
+                    company_id=company_id,
+                    account_code=line["account_code"],
+                    account_name=line.get("account_name"),
+                    debit=Decimal(str(line.get("debit", "0.00"))),
+                    credit=Decimal(str(line.get("credit", "0.00"))),
+                    cost_center=line.get("cost_center"),
+                    project_code=line.get("project_code"),
+                    partner_ruc=line.get("partner_ruc"),
+                    document_type=line.get("document_type"),
+                    document_series=line.get("document_series"),
+                    document_number=line.get("document_number"),
+                )
+                for line in lines_payload
+            ]
+
+            total_debit = sum(x.debit for x in lines)
+            total_credit = sum(x.credit for x in lines)
+            if total_debit != total_credit:
+                raise UnbalancedEntryException(f"Debe {total_debit} != Haber {total_credit}")
+
+            last_entry = await repo.get_last_entry_for_update(tenant_id)
+            previous_hash = last_entry.row_hash if last_entry else "GENESIS"
+            entry = JournalEntry(
+                id=uuid4(),
+                tenant_id=tenant_id,
+                company_id=company_id,
+                period_id=period.id,
+                entry_date=payload.get("entry_date") or date.today(),
+                description=payload["description"],
+                source_module=payload.get("source_module", "ACCOUNTING"),
+                source_id=payload.get("source_id"),
+                currency=payload.get("currency", "PEN"),
+                total_debit=total_debit,
+                total_credit=total_credit,
+                previous_hash=previous_hash,
+                row_hash="PENDING",
+                created_by=self._actor_uuid(payload.get("user_id")),
+            )
+            for line in lines:
+                line.entry_id = entry.id
+
+            entry.row_hash = self.hash_service.generate(entry, lines, previous_hash)
+            await repo.add_entry(entry, lines)
+            if payload.get("financial_document"):
+                document_payload = dict(payload["financial_document"])
+                if "metadata_json" in document_payload:
+                    document_payload["metadata_json"] = self._json_safe(document_payload["metadata_json"])
+                document = FinancialDocument(
+                    tenant_id=tenant_id,
+                    company_id=company_id,
+                    journal_entry_id=entry.id,
+                    **document_payload,
+                )
+                await repo.add_financial_document(document)
+            await repo.add_audit(AuditLog(
+                tenant_id=tenant_id,
+                trace_id=payload["trace_id"],
+                entity_type="JournalEntry",
+                entity_id=str(entry.id),
+                action="CREATE_POSTED",
+                before_state=None,
+                after_state={
+                    "entry_id": str(entry.id),
+                    "row_hash": entry.row_hash,
+                    "source_module": entry.source_module,
+                    "total": str(total_debit),
+                },
+                actor_user_id=self._actor_uuid(payload.get("user_id")),
+                ip_address=payload.get("ip_address"),
+                user_agent=payload.get("user_agent"),
+            ))
+
+            for event in payload.get("outbox_events", []):
+                await repo.add_outbox(OutboxEvent(
+                    tenant_id=tenant_id,
+                    topic=event["topic"],
+                    aggregate_type=event.get("aggregate_type", "JournalEntry"),
+                    aggregate_id=str(entry.id),
+                    payload=self._json_safe(event.get("payload", {"journal_entry_id": str(entry.id), "trace_id": payload["trace_id"]})),
+                    status="PENDING",
+                    attempts=0,
+                    max_attempts=event.get("max_attempts", 3),
+                ))
+
+            await uow.commit()
+            return entry
+
+    async def post_purchase_invoice(self, purchase_data: dict) -> JournalEntry:
+        tenant_id = purchase_data.get("tenant_id")
+        if not tenant_id:
+            raise TenantRequiredException("tenant_id es obligatorio")
+
+        subtotal = self._as_decimal(purchase_data["subtotal"])
+        igv = self._as_decimal(purchase_data["igv"])
+        total = self._as_decimal(purchase_data["total"])
+        detraccion = self._as_decimal(purchase_data.get("detraccion_amount", "0.00"))
+        percepcion = self._as_decimal(purchase_data.get("percepcion_amount", "0.00"))
+        retencion = self._as_decimal(purchase_data.get("retencion_amount", "0.00"))
+        payable_balance = (total + percepcion - retencion - detraccion).quantize(Decimal("0.01"))
+        company_id = purchase_data.get("company_id")
+        supplier_ruc = purchase_data.get("supplier_ruc")
+        doc_type = purchase_data.get("doc_type", "01")
+        serie = str(purchase_data.get("serie") or "").strip().upper()
+        number = str(purchase_data.get("number") or "").strip()
+        document_date = purchase_data.get("entry_date") or purchase_data.get("issue_date") or date.today()
+        if isinstance(document_date, str):
+            document_date = date.fromisoformat(document_date[:10])
+
+        # Regla profesional de duplicados:
+        # Un comprobante de compras AP no puede registrarse dos veces.
+        # Si existe con diferencias críticas, se genera nota de auditoría/corrección
+        # y se devuelve el asiento existente sin pisar ni duplicar información.
+        async with self.uow_factory(tenant_id) as uow:
+            existing_result = await uow.session.execute(
+                select(FinancialDocument)
+                .where(
+                    and_(
+                        FinancialDocument.tenant_id == tenant_id,
+                        FinancialDocument.direction == "AP",
+                        FinancialDocument.document_type == doc_type,
+                        FinancialDocument.series == serie,
+                        FinancialDocument.number == number,
+                    )
+                )
+            )
+            existing_document = existing_result.scalar_one_or_none()
+
+            if existing_document:
+                differences = self._existing_purchase_differences(
+                    existing_document,
+                    purchase_data,
+                    subtotal,
+                    igv,
+                    total,
+                    document_date,
+                )
+
+                if differences:
+                    await uow.session.merge(AuditLog(
+                        tenant_id=tenant_id,
+                        trace_id=purchase_data.get("trace_id") or str(uuid4()),
+                        entity_type="FinancialDocument",
+                        entity_id=str(existing_document.id),
+                        action="PURCHASE_CORRECTION_NOTE_REQUIRED",
+                        before_state=self._json_safe({
+                            "document_id": str(existing_document.id),
+                            "series": existing_document.series,
+                            "number": existing_document.number,
+                            "metadata_json": existing_document.metadata_json or {},
+                            "taxable_amount": existing_document.taxable_amount,
+                            "tax_amount": existing_document.tax_amount,
+                            "total_amount": existing_document.total_amount,
+                            "issue_date": existing_document.issue_date,
+                        }),
+                        after_state=self._json_safe({
+                            "message": "Intento de registrar comprobante de compra ya existente con diferencias. Se requiere nota/corrección controlada.",
+                            "document": f"{serie}-{number}",
+                            "direction": "AP",
+                            "document_type": doc_type,
+                            "differences": differences,
+                            "incoming_supplier_ruc": supplier_ruc,
+                            "incoming_supplier_name": purchase_data.get("supplier_name"),
+                            "incoming_total": total,
+                            "required_action": "CREATE_CORRECTION_NOTE_OR_REVERSAL",
+                        }),
+                        actor_user_id=self._actor_uuid(purchase_data.get("user_id")),
+                        ip_address=purchase_data.get("ip_address"),
+                        user_agent=purchase_data.get("user_agent"),
+                    ))
+                    await uow.session.merge(OutboxEvent(
+                        tenant_id=tenant_id,
+                        topic="accounting.purchase.correction_required",
+                        aggregate_type="FinancialDocument",
+                        aggregate_id=str(existing_document.id),
+                        payload=self._json_safe({
+                            "document_id": str(existing_document.id),
+                            "document": f"{serie}-{number}",
+                            "differences": differences,
+                            "trace_id": purchase_data.get("trace_id"),
+                        }),
+                        status="PENDING",
+                        attempts=0,
+                        max_attempts=3,
+                    ))
+                    await uow.commit()
+
+                if existing_document.journal_entry_id:
+                    existing_entry_result = await uow.session.execute(
+                        select(JournalEntry)
+                        .options(selectinload(JournalEntry.lines))
+                        .where(
+                            and_(
+                                JournalEntry.tenant_id == tenant_id,
+                                JournalEntry.id == existing_document.journal_entry_id,
+                            )
+                        )
+                    )
+                    existing_entry = existing_entry_result.scalar_one_or_none()
+                    if existing_entry:
+                        return existing_entry
+
+                raise UnbalancedEntryException(
+                    f"El documento de compra {serie}-{number} ya existe sin asiento contable vinculado. "
+                    "Revise financial_documents antes de postear nuevamente."
+                )
+
+        incoming_account_lines = purchase_data.get("account_lines") or []
+        lines: list[dict] = []
+
+        if incoming_account_lines:
+            for raw in incoming_account_lines:
+                debit = self._as_decimal(raw.get("debit", "0.00"))
+                credit = self._as_decimal(raw.get("credit", "0.00"))
+                if debit == 0 and credit == 0:
+                    continue
+                account_code = self._normalize_code(raw.get("account_code"), purchase_data.get("expense_account", "659101"))
+                cost_center = raw.get("cost_center")
+                if cost_center == "-":
+                    cost_center = None
+                lines.append({
+                    "account_code": account_code,
+                    "account_name": raw.get("account_name") or f"Cuenta {account_code}",
+                    "debit": debit,
+                    "credit": credit,
+                    "partner_ruc": raw.get("partner_ruc") or supplier_ruc,
+                    "document_type": raw.get("document_type") or doc_type,
+                    "document_series": raw.get("document_series") or serie,
+                    "document_number": raw.get("document_number") or number,
+                    "cost_center": cost_center,
+                    "project_code": raw.get("project_code"),
+                })
+        else:
+            lines = [
+                {
+                    "account_code": self._normalize_code(purchase_data.get("expense_account", "659101")),
+                    "account_name": "Compras y gastos",
+                    "debit": subtotal,
+                    "credit": Decimal("0.00"),
+                    "partner_ruc": supplier_ruc,
+                    "document_type": doc_type,
+                    "document_series": serie,
+                    "document_number": number,
+                    "cost_center": purchase_data.get("cost_center"),
+                },
+                {
+                    "account_code": "40111",
+                    "account_name": "IGV credito fiscal",
+                    "debit": igv,
+                    "credit": Decimal("0.00"),
+                    "partner_ruc": supplier_ruc,
+                    "document_type": doc_type,
+                    "document_series": serie,
+                    "document_number": number,
+                    "cost_center": None,
+                },
+                {
+                    "account_code": "4212",
+                    "account_name": "Cuentas por pagar comerciales",
+                    "debit": Decimal("0.00"),
+                    "credit": payable_balance,
+                    "partner_ruc": supplier_ruc,
+                    "document_type": doc_type,
+                    "document_series": serie,
+                    "document_number": number,
+                    "cost_center": None,
+                },
+            ]
+            if detraccion:
+                lines.append({"account_code": "1041", "account_name": "Banco detracciones", "debit": Decimal("0.00"), "credit": detraccion, "partner_ruc": supplier_ruc, "document_type": doc_type, "document_series": serie, "document_number": number, "cost_center": None})
+            if retencion:
+                lines.append({"account_code": "40114", "account_name": "IGV retenciones", "debit": Decimal("0.00"), "credit": retencion, "partner_ruc": supplier_ruc, "document_type": doc_type, "document_series": serie, "document_number": number, "cost_center": None})
+            if percepcion:
+                lines.append({"account_code": "40113", "account_name": "IGV percepciones", "debit": percepcion, "credit": Decimal("0.00"), "partner_ruc": supplier_ruc, "document_type": doc_type, "document_series": serie, "document_number": number, "cost_center": None})
+
+        total_debit = sum(self._as_decimal(line.get("debit")) for line in lines)
+        total_credit = sum(self._as_decimal(line.get("credit")) for line in lines)
+        if total_debit != total_credit:
+            raise UnbalancedEntryException(f"Compra descuadrada: Debe {total_debit} != Haber {total_credit}")
+
+        # Enforce cost center for expense/analytic accounts.
+        for line in lines:
+            if self._requires_cost_center(line["account_code"]) and not line.get("cost_center"):
+                raise UnbalancedEntryException(f"La cuenta {line['account_code']} requiere centro de costo")
+
+        account_upserts = list(purchase_data.get("accounts_to_upsert") or [])
+        existing_codes = {str(item.get("account_code") or "") for item in account_upserts}
+        for line in lines:
+            code = line["account_code"]
+            if code and code not in existing_codes:
+                account_upserts.append({
+                    "account_code": code,
+                    "account_name": line.get("account_name") or f"Cuenta {code}",
+                    "account_class": self._account_class(code),
+                    "statement": self._statement_for_account(code),
+                    "nature": self._nature_for_account(code),
+                    "accepts_cost_center": self._requires_cost_center(code),
+                    "accepts_partner": bool(line.get("partner_ruc")),
+                })
+
+        cost_center_upserts = list(purchase_data.get("cost_centers_to_upsert") or [])
+        known_centers = {str(item.get("code") or "").upper() for item in cost_center_upserts}
+        for line in lines:
+            center = str(line.get("cost_center") or "").upper()
+            if center and center not in known_centers:
+                cost_center_upserts.append({"code": center, "name": center})
+                known_centers.add(center)
+
+        async with self.uow_factory(tenant_id) as uow:
+            repo = LedgerRepository(uow.session)
+            for account in account_upserts:
+                code = self._normalize_code(account.get("account_code"))
+                await repo.upsert_chart_account(
+                    tenant_id,
+                    company_id=company_id,
+                    code=code,
+                    name=account.get("account_name") or f"Cuenta {code}",
+                    account_class=str(account.get("account_class") or self._account_class(code))[:2],
+                    statement=account.get("statement") or self._statement_for_account(code),
+                    nature=account.get("nature") or self._nature_for_account(code),
+                    accepts_cost_center=account.get("accepts_cost_center") if account.get("accepts_cost_center") is not None else self._requires_cost_center(code),
+                    accepts_partner=account.get("accepts_partner") if account.get("accepts_partner") is not None else False,
+                )
+            for center in cost_center_upserts:
+                await repo.upsert_cost_center(
+                    tenant_id,
+                    company_id=company_id,
+                    code=center.get("code"),
+                    name=center.get("name") or center.get("code"),
+                    parent_code=center.get("parent_code"),
+                )
+            await uow.commit()
+
+        financial_metadata = self._json_safe({
+            "supplier_ruc": supplier_ruc,
+            "supplier_name": purchase_data.get("supplier_name"),
+            "sire_ready": True,
+            "detraccion_amount": str(detraccion),
+            "percepcion_amount": str(percepcion),
+            "retencion_amount": str(retencion),
+            "line_items": purchase_data.get("line_items") or purchase_data.get("items") or [],
+            "account_lines": [
+                {
+                    "account_code": line.get("account_code"),
+                    "account_name": line.get("account_name"),
+                    "cost_center": line.get("cost_center"),
+                    "debit": str(line.get("debit")),
+                    "credit": str(line.get("credit")),
+                }
+                for line in lines
+            ],
+            "accounts_to_upsert": account_upserts,
+            "cost_centers_to_upsert": cost_center_upserts,
+            "audit_metadata": purchase_data.get("audit_metadata") or {},
+        })
+
+        return await self.post_journal({
+            **purchase_data,
+            "company_ruc": purchase_data.get("supplier_ruc"),
+            "description": f"Compra {serie}-{number}",
+            "source_module": "PURCHASING",
+            "source_id": str(purchase_data.get("purchase_id")),
+            "lines": lines,
+            "financial_document": {
+                "direction": "AP",
+                "document_type": doc_type,
+                "series": serie,
+                "number": number,
+                "issue_date": document_date,
+                "due_date": purchase_data.get("due_date"),
+                "currency": purchase_data.get("currency", "PEN"),
+                "exchange_rate": purchase_data.get("exchange_rate"),
+                "taxable_amount": subtotal,
+                "tax_amount": igv,
+                "total_amount": total,
+                "balance_amount": payable_balance,
+                "detraccion_amount": detraccion,
+                "percepcion_amount": percepcion,
+                "retencion_amount": retencion,
+                "sunat_status": "PENDING",
+                "metadata_json": financial_metadata,
+            },
+            "outbox_events": [
+                {
+                    "topic": "accounting.purchase.posted",
+                    "aggregate_type": "FinancialDocument",
+                    "payload": {
+                        "purchase_id": str(purchase_data.get("purchase_id")),
+                        "serie": serie,
+                        "number": number,
+                        "supplier_ruc": supplier_ruc,
+                        "total": str(total),
+                        "trace_id": purchase_data.get("trace_id"),
+                    },
+                }
+            ],
+        })
+
+    async def post_invoice(self, invoice_data: dict) -> JournalEntry:
+        tenant_id = invoice_data.get("tenant_id")
+        if not tenant_id:
+            raise TenantRequiredException("tenant_id es obligatorio")
+
+        async with self.uow_factory(tenant_id) as uow:
+            repo = LedgerRepository(uow.session)
+            period = await repo.get_period_for_update(tenant_id, int(invoice_data["year"]), int(invoice_data["month"]))
+            if not period or period.is_closed:
+                raise PeriodLockedException("Periodo contable bloqueado")
+
+            subtotal = Decimal(str(invoice_data["subtotal"]))
+            igv = Decimal(str(invoice_data["igv"]))
+            total = Decimal(str(invoice_data["total"]))
+            detraccion = Decimal(str(invoice_data.get("detraccion_amount", "0.00")))
+            percepcion = Decimal(str(invoice_data.get("percepcion_amount", "0.00")))
+            retencion = Decimal(str(invoice_data.get("retencion_amount", "0.00")))
+            company_id = invoice_data.get("company_id")
+
+            lines = [
+                JournalLine(id=uuid4(), tenant_id=tenant_id, company_id=company_id, account_code="1212", account_name="Cuentas por cobrar comerciales", debit=total + percepcion - retencion - detraccion, credit=Decimal("0.00"), partner_ruc=invoice_data.get("customer_ruc"), document_type=invoice_data.get("doc_type"), document_series=invoice_data.get("serie"), document_number=invoice_data.get("number"), cost_center=invoice_data.get("cost_center")),
+                JournalLine(id=uuid4(), tenant_id=tenant_id, company_id=company_id, account_code="4011", account_name="IGV por pagar", debit=Decimal("0.00"), credit=igv, partner_ruc=invoice_data.get("customer_ruc"), document_type=invoice_data.get("doc_type"), document_series=invoice_data.get("serie"), document_number=invoice_data.get("number"), cost_center=invoice_data.get("cost_center")),
+                JournalLine(id=uuid4(), tenant_id=tenant_id, company_id=company_id, account_code="7011", account_name="Ventas", debit=Decimal("0.00"), credit=subtotal, partner_ruc=invoice_data.get("customer_ruc"), document_type=invoice_data.get("doc_type"), document_series=invoice_data.get("serie"), document_number=invoice_data.get("number"), cost_center=invoice_data.get("cost_center")),
+            ]
+            if detraccion:
+                lines.append(JournalLine(id=uuid4(), tenant_id=tenant_id, company_id=company_id, account_code="1041", account_name="Banco detracciones", debit=detraccion, credit=Decimal("0.00"), partner_ruc=invoice_data.get("customer_ruc"), document_type=invoice_data.get("doc_type"), document_series=invoice_data.get("serie"), document_number=invoice_data.get("number"), cost_center=invoice_data.get("cost_center")))
+            if retencion:
+                lines.append(JournalLine(id=uuid4(), tenant_id=tenant_id, company_id=company_id, account_code="40114", account_name="IGV retenciones", debit=retencion, credit=Decimal("0.00"), partner_ruc=invoice_data.get("customer_ruc"), document_type=invoice_data.get("doc_type"), document_series=invoice_data.get("serie"), document_number=invoice_data.get("number"), cost_center=invoice_data.get("cost_center")))
+            if percepcion:
+                lines.append(JournalLine(id=uuid4(), tenant_id=tenant_id, company_id=company_id, account_code="40113", account_name="IGV percepciones", debit=Decimal("0.00"), credit=percepcion, partner_ruc=invoice_data.get("customer_ruc"), document_type=invoice_data.get("doc_type"), document_series=invoice_data.get("serie"), document_number=invoice_data.get("number"), cost_center=invoice_data.get("cost_center")))
+
+            self._run_expert_guard({
+                "source_module": "BILLING",
+                "supplier_ruc": None,
+                "customer_ruc": invoice_data.get("customer_ruc"),
+                "doc_type": invoice_data.get("doc_type"),
+                "serie": invoice_data.get("serie"),
+                "number": invoice_data.get("number"),
+                "entry_date": invoice_data.get("entry_date"),
+                "total": total,
+                "company_ruc": invoice_data.get("company_ruc") or settings.sunat_ruc,
+                "sunat_validation": invoice_data.get("sunat_validation"),
+                "lines": [
+                    {
+                        "account_code": line.account_code,
+                        "debit": line.debit,
+                        "credit": line.credit,
+                        "cost_center": line.cost_center,
+                    }
+                    for line in lines
+                ],
+            })
+
+            total_debit = sum(x.debit for x in lines)
+            total_credit = sum(x.credit for x in lines)
+            if total_debit != total_credit:
+                raise UnbalancedEntryException(f"Debe {total_debit} != Haber {total_credit}")
+
+            last_entry = await repo.get_last_entry_for_update(tenant_id)
+            previous_hash = last_entry.row_hash if last_entry else "GENESIS"
+
+            entry = JournalEntry(
+                id=uuid4(),
+                tenant_id=tenant_id,
+                company_id=company_id,
+                period_id=period.id,
+                entry_date=invoice_data.get("entry_date") or date.today(),
+                description=f"Venta {invoice_data.get('serie')}-{invoice_data.get('number')}",
+                source_module="BILLING",
+                source_id=str(invoice_data.get("invoice_id")),
+                currency=invoice_data.get("currency", "PEN"),
+                total_debit=total_debit,
+                total_credit=total_credit,
+                previous_hash=previous_hash,
+                row_hash="PENDING",
+                created_by=self._actor_uuid(invoice_data.get("user_id")),
+            )
+            for line in lines:
+                line.entry_id = entry.id
+
+            entry.row_hash = self.hash_service.generate(entry, lines, previous_hash)
+            await repo.add_entry(entry, lines)
+            document = FinancialDocument(
+                tenant_id=tenant_id,
+                company_id=company_id,
+                direction="AR",
+                document_type=invoice_data.get("doc_type", "01"),
+                series=invoice_data.get("serie"),
+                number=invoice_data.get("number"),
+                issue_date=invoice_data.get("entry_date") or date.today(),
+                due_date=invoice_data.get("due_date"),
+                currency=invoice_data.get("currency", "PEN"),
+                exchange_rate=invoice_data.get("exchange_rate"),
+                taxable_amount=subtotal,
+                tax_amount=igv,
+                total_amount=total,
+                balance_amount=total + percepcion - retencion - detraccion,
+                detraccion_amount=detraccion,
+                percepcion_amount=percepcion,
+                retencion_amount=retencion,
+                journal_entry_id=entry.id,
+                sunat_status="PENDING",
+                xml_hash=invoice_data.get("xml_hash"),
+                metadata_json=self._json_safe({
+                    "customer_ruc": invoice_data.get("customer_ruc"),
+                    "ubl_version": "2.1",
+                    "xml_ready": bool(invoice_data.get("xml_raw")),
+                    "line_items": invoice_data.get("line_items", []),
+                }),
+            )
+            await repo.add_financial_document(document)
+            await repo.add_audit(AuditLog(
+                tenant_id=tenant_id, trace_id=invoice_data["trace_id"], entity_type="JournalEntry",
+                entity_id=str(entry.id), action="CREATE_POSTED", before_state=None,
+                after_state={"entry_id": str(entry.id), "row_hash": entry.row_hash, "total": str(total_debit)},
+                actor_user_id=self._actor_uuid(invoice_data.get("user_id")), ip_address=invoice_data.get("ip_address"), user_agent=invoice_data.get("user_agent")
+            ))
+            await repo.add_outbox(OutboxEvent(
+                tenant_id=tenant_id, topic="sunat.invoice.post", aggregate_type="JournalEntry", aggregate_id=str(entry.id),
+                payload=self._json_safe({"invoice": invoice_data, "journal_entry_id": str(entry.id), "financial_document_id": str(document.id), "trace_id": invoice_data["trace_id"]}),
+                status="PENDING", attempts=0, max_attempts=3
+            ))
+            await uow.commit()
+            return entry
