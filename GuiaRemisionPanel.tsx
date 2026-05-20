@@ -9,6 +9,8 @@ type GuiaLineItem = {
 };
 
 type GuiaRemisionPanelProps = {
+  token?: string;
+  tenantId?: string;
   source: {
     serie: string;
     number: string;
@@ -42,6 +44,7 @@ type GuiaData = {
 };
 
 const today = () => new Date().toISOString().slice(0, 10);
+const API_BASE = '/api/v1';
 
 const nextGuideNumber = () => {
   const n = Number(localStorage.getItem('guiaRemisionCounter') || '1');
@@ -51,7 +54,7 @@ const nextGuideNumber = () => {
 
 const pdfEscape = (value: string) => value.replace(/[()\\]/g, '');
 
-export const GuiaRemisionPanel: React.FC<GuiaRemisionPanelProps> = ({ source, onClose, onSaved }) => {
+export const GuiaRemisionPanel: React.FC<GuiaRemisionPanelProps> = ({ token, tenantId, source, onClose, onSaved }) => {
   const [editable, setEditable] = useState(true);
   const [message, setMessage] = useState('');
   const [saving, setSaving] = useState(false);
@@ -89,15 +92,31 @@ export const GuiaRemisionPanel: React.FC<GuiaRemisionPanelProps> = ({ source, on
     setSaving(true);
     try {
       const payload = {
+        tenant_id: tenantId,
+        direction: 'AR',
         source_document: `${source.serie}-${source.number}`,
-        guia_id: guiaId,
         ...data,
         line_items: source.lineItems,
       };
 
-      localStorage.setItem(`guia:${guiaId}`, JSON.stringify(payload));
+      if (token && tenantId) {
+        const response = await fetch(`${API_BASE}/ledger/documents/guide/save`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'X-Tenant-Id': tenantId,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        });
+        if (!response.ok) {
+          throw new Error(await response.text());
+        }
+      } else {
+        localStorage.setItem(`guia:${guiaId}`, JSON.stringify(payload));
+      }
       setEditable(false);
-      setMessage(`Guia ${guiaId} guardada.`);
+      setMessage(`Guia ${guiaId} guardada${token && tenantId ? ' en documentos' : ''}.`);
       onSaved?.();
     } catch {
       setMessage('No se pudo guardar la guia.');

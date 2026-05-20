@@ -51,14 +51,14 @@ export const DashboardEnterprisePremium = () => {
       title="Dashboard Enterprise"
       subtitle="Gestión integral de operaciones y compliance"
       action={
-        <div className="flex gap-2">
-          <button className="btn-fluent-primary text-sm">+ Nueva Venta</button>
-          <button className="btn-fluent-secondary text-sm" onClick={exportSummary}>Exportar</button>
+        <div className="dashboard-action-row">
+          <button className="btn-fluent-primary">+ Nueva Venta</button>
+          <button className="btn-fluent-secondary" onClick={exportSummary}>Exportar</button>
         </div>
       }
     >
       {/* Metrics Row */}
-      <PanelsGrid columns={5} gap="md">
+      <PanelsGrid columns={4} gap="md">
         <MetricCard title="Caja" value="S/ 482,900" color="blue" trend="+2.4%" />
         <MetricCard title="Cuentas por Cobrar" value="S/ 1,284,320" color="green" trend="+1.6%" />
         <MetricCard title="Cuentas por Pagar" value="S/ 712,008" color="red" trend="-0.8%" />
@@ -73,23 +73,23 @@ export const DashboardEnterprisePremium = () => {
           title="Libros Electronicos - PLE 5.1/5.2"
           subtitle="Periodo: Mayo 2026 - 342 asientos"
           icon={<DocumentText24Regular />}
-          action={<button className="btn-fluent-primary text-xs">Generar PLE</button>}
+          action={<button className="btn-fluent-primary">Generar PLE</button>}
           variant="success"
         >
-          <div className="space-y-3">
-            <div className="flex items-center justify-between p-4 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors">
-              <div className="flex-1">
-                <p className="font-semibold text-sm text-slate-900">Libro Diario (5.1)</p>
-                <p className="text-xs text-slate-500">342 asientos detectados - Hash de integridad OK</p>
+          <div className="dashboard-list">
+            <div className="dashboard-list-item">
+              <div className="dashboard-list-body">
+                <p className="dashboard-list-title">Libro Diario (5.1)</p>
+                <p className="dashboard-list-note">342 asientos detectados - Hash de integridad OK</p>
               </div>
-              <span className="status-ok ml-3">OK</span>
+              <span className="status-ok">OK</span>
             </div>
-            <div className="flex items-center justify-between p-4 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors">
-              <div className="flex-1">
-                <p className="font-semibold text-sm text-slate-900">Libro Simplificado (5.2)</p>
-                <p className="text-xs text-slate-500">Formato para exportación listo</p>
+            <div className="dashboard-list-item">
+              <div className="dashboard-list-body">
+                <p className="dashboard-list-title">Libro Simplificado (5.2)</p>
+                <p className="dashboard-list-note">Formato para exportación listo</p>
               </div>
-              <button className="btn-fluent-secondary text-xs whitespace-nowrap ml-3">Descargar ZIP</button>
+              <button className="btn-fluent-secondary">Descargar ZIP</button>
             </div>
           </div>
         </PanelSection>
@@ -131,7 +131,7 @@ export const DashboardEnterprisePremium = () => {
           title="Auditoria Preventiva IA"
           subtitle="Análisis de riesgos y compliance automático"
           icon={<CheckmarkCircle24Regular />}
-          action={<button className="btn-fluent-primary text-xs">INICIAR ESCANEO</button>}
+          action={<button className="btn-fluent-primary">INICIAR ESCANEO</button>}
         >
           <div className="space-y-3">
             <div className="alert alert-danger">
@@ -221,7 +221,7 @@ export const DashboardEnterprisePremium = () => {
       <PanelSection
         title="Ultimas Operaciones Registradas"
         subtitle="Asientos más recientes del período"
-        action={<button className="btn-fluent-secondary text-xs">Ver Todo</button>}
+        action={<button className="btn-fluent-secondary">Ver Todo</button>}
       >
         <div className="overflow-x-auto">
           <table className="erp-table w-full text-sm">
@@ -257,3 +257,5 @@ export const DashboardEnterprisePremium = () => {
     </PageLayout>
   );
 };
+
+export default DashboardEnterprisePremium;

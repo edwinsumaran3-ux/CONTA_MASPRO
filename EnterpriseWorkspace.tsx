@@ -22,7 +22,7 @@ import {
   Wallet24Regular,
 } from '@fluentui/react-icons';
 import { SidePanel } from '../../components/ui/SidePanel';
-import { SaleFormEnterprise } from './SaleFormEnterprise';
+import { SaleFormEnterprise, type SaleFormData, type SaleSubmitPayload } from './SaleFormEnterprise';
 import { TenantSelector } from '../../components/layout/TenantSelector';
 import { MassiveUpload } from './MassiveUpload';
 import { PurchaseFormEnterprise, type PurchaseSubmitPayload } from './PurchaseFormEnterprise';
@@ -34,9 +34,10 @@ import { AssetRegister } from '../assets/AssetRegister';
 import { FinancialDashboard } from '../reports/FinancialDashboard';
 import { BooksCenter } from '../reports/BooksCenter';
 import { OwnerDashboard } from '../client-portal/OwnerDashboard';
-import { InventoryDashboard } from '../inventory/InventoryDashboard';
+import EnterpriseFulfillmentCommandCenter from '../inventory/EnterpriseFulfillmentCommandCenter';
 import { PeriodCloseAction } from './PeriodCloseAction';
 import DashboardEnterprise from '../../components/DashboardEnterprise';
+import AccountingLivePanel, { type AccountingMovement } from '../../components/AccountingLivePanel';
 import AccountDetailPanel from '../../components/AccountDetailPanel';
 import { LedgerAnalytic } from './LedgerAnalytic';
 
@@ -86,6 +87,7 @@ type PurchaseForm = {
   expenseAccount: string;
   costCenter: string;
 };
+
 
 type ChecklistState = {
   conciliacionBancos: boolean;
@@ -141,13 +143,39 @@ type QuickFilters = {
 };
 
 const API_BASE = '/api/v1';
-const HR_API_BASE = 'http://127.0.0.1:8001/api/v1';
+const HR_API_BASE = API_BASE;
 const TENANT_ID = '11111111-1111-1111-1111-111111111111';
 const USER_ID = 'erp.operator';
 const MAX_JOURNAL_ROWS = 3000;
 const MAX_RENDER_ROWS = 1200;
+const USE_DEMO_ROWS = false;
+const DEFAULT_PERIOD = { year: 2026, month: 5 };
 
-const getTenantId = () => localStorage.getItem('tenant_id') || '11111111-1111-1111-1111-111111111111';
+const getTenantId = () => {
+  const current = localStorage.getItem('tenant_id');
+  if (current !== TENANT_ID) {
+    localStorage.setItem('tenant_id', TENANT_ID);
+  }
+  return TENANT_ID;
+};
+
+const tokenTenantId = (value?: string | null) => {
+  try {
+    const payload = String(value || '').split('.')[1];
+    if (!payload) return '';
+    const padded = payload.padEnd(payload.length + ((4 - (payload.length % 4)) % 4), '=');
+    const decoded = JSON.parse(atob(padded.replace(/-/g, '+').replace(/_/g, '/')));
+    return String(decoded.tenant_id || '');
+  } catch {
+    return '';
+  }
+};
+
+const periodFromIsoDate = (value?: string | null) => {
+  const match = /^(\d{4})-(\d{2})/.exec(String(value || ''));
+  if (!match) return DEFAULT_PERIOD;
+  return { year: Number(match[1]), month: Number(match[2]) };
+};
 
 const moduleLabel = (module?: string) => {
   const value = String(module || '').toUpperCase();
@@ -156,7 +184,7 @@ const moduleLabel = (module?: string) => {
   if (value === 'BILLING') return 'VENTAS';
   if (value === 'ACCOUNTING') return 'CONTABILIDAD';
   if (value === 'TREASURY') return 'TESORERIA';
-  if (value === 'INVENTORY') return 'INVENTARIO';
+  if (value === 'INVENTORY' || value === 'INVENTORY_COGS') return 'INVENTARIO';
   if (value === 'PAYROLL') return 'PLANILLAS';
   if (value === 'ASSETS') return 'ACTIVOS';
 
@@ -187,6 +215,20 @@ const seedRows: JournalRow[] = [
   { id: 'JE-2026-000181', date: '2026-05-09', period: '2026-05', description: 'Diferencia de cambio cartera USD', account: '676', costCenter: 'FIN-TES', debit: '930.40', credit: '0.00', status: 'POSTED', hash: 'ebc76550a47cb24d', sourceModule: 'TESORERIA' },
   { id: 'JE-2026-000180', date: '2026-05-08', period: '2026-05', description: 'Provision cobranza dudosa', account: '684', costCenter: 'FIN-CXC', debit: '1,540.00', credit: '0.00', status: 'REVIEW', hash: 'b41c9e310a946145', sourceModule: 'CXC/CXP' },
 ];
+
+const emptyJournalRow: JournalRow = {
+  id: 'EMPTY-JOURNAL-SELECTION',
+  date: '',
+  period: '',
+  description: 'Sin asientos devueltos por la base de datos para el periodo consultado',
+  account: 'N/A',
+  costCenter: '-',
+  debit: '0.00',
+  credit: '0.00',
+  status: 'SIN_DATOS',
+  hash: '',
+  sourceModule: 'BASE_DATOS',
+};
 
 const metricCards = [
   ['Caja', 'S/ 482,900.00'],
@@ -234,6 +276,48 @@ const isCostCenterEmpty = (cc: string | undefined | null) => {
   return value === '' || value === '-' || value === 'N/A' || value === 'NA';
 };
 
+const normalizeDocumentPart = (value?: string | null) => String(value || '').trim().toUpperCase();
+
+const prioritizeDocumentRows = (
+  journalRows: JournalRow[],
+  sourceModule: string,
+  serie?: string,
+  number?: string,
+) => {
+  const targetModule = normalizeDocumentPart(sourceModule);
+  const targetSerie = normalizeDocumentPart(serie);
+  const targetNumber = normalizeDocumentPart(number);
+  if (!targetSerie || !targetNumber) {
+    return { rows: journalRows, matchCount: 0 };
+  }
+
+  const targetToken = `${targetSerie}-${targetNumber}`;
+  const matches: JournalRow[] = [];
+  const rest: JournalRow[] = [];
+
+  for (const row of journalRows) {
+    const rowModule = normalizeDocumentPart(row.sourceModule);
+    const rowSerie = normalizeDocumentPart(row.documentSeries);
+    const rowNumber = normalizeDocumentPart(row.documentNumber);
+    const rowDescription = normalizeDocumentPart(row.description);
+    const sameDocument =
+      (rowSerie === targetSerie && rowNumber === targetNumber) ||
+      rowDescription.includes(targetToken);
+    const sameModule = !targetModule || rowModule === targetModule;
+
+    if (sameModule && sameDocument) {
+      matches.push(row);
+    } else {
+      rest.push(row);
+    }
+  }
+
+  return {
+    rows: matches.length ? [...matches, ...rest] : journalRows,
+    matchCount: matches.length,
+  };
+};
+
 const validatorBadge = (status: ValidatorStatus, variance: number) => {
   if (status === 'OK') return { label: 'VALIDADO', symbol: '✓', cls: 'ok' };
   if (status === 'DESCUADRADO') return { label: `DESC ${variance.toFixed(2)}`, symbol: '✖', cls: 'descuadrado' };
@@ -264,8 +348,8 @@ const downloadFile = (filename: string, content: string, type: string) => {
 
 export const EnterpriseWorkspace = () => {
   
-  const [rows, setRows] = useState<JournalRow[]>(seedRows);
-  const [selectedRow, setSelectedRow] = useState<JournalRow>(seedRows[0]);
+  const [rows, setRows] = useState<JournalRow[]>(USE_DEMO_ROWS ? seedRows : []);
+  const [selectedRow, setSelectedRow] = useState<JournalRow>(USE_DEMO_ROWS ? seedRows[0] : emptyJournalRow);
   const [token, setToken] = useState('');
   const [loading, setLoading] = useState(true);
   const [railExpanded, setRailExpanded] = useState(false);
@@ -278,6 +362,16 @@ export const EnterpriseWorkspace = () => {
   const [accountDetailOpen, setAccountDetailOpen] = useState(false);
   const bootstrapRanRef = useRef(false);
 
+  const [saleForm, setSaleForm] = useState<SaleFormData>({
+    serie: 'F001',
+    number: '8421',
+    customerRuc: '20600123456',
+    subtotal: '16000.00',
+    igv: '2880.00',
+    revenueAccount: '704101',
+    costCenter: 'LIM-COM',
+  });
+
   const [purchaseForm, setPurchaseForm] = useState<PurchaseForm>({
     serie: 'E001',
     number: '558',
@@ -287,6 +381,7 @@ export const EnterpriseWorkspace = () => {
     expenseAccount: '6011',
     costCenter: 'LIM-ADM',
   });
+
 
   const [checklist, setChecklist] = useState<ChecklistState>({
     conciliacionBancos: true,
@@ -453,6 +548,54 @@ export const EnterpriseWorkspace = () => {
     return entriesIndex.get(selectedRow.entryId ?? selectedRow.id);
   }, [selectedRow, entriesIndex]);
 
+  const accountingMovements = useMemo<AccountingMovement[]>(() => {
+    return rows.map((row) => {
+      const summary = entriesIndex.get(row.entryId ?? row.id);
+      const missingCostCenter = requiresCostCenter(row.account) && isCostCenterEmpty(row.costCenter);
+      const risk: AccountingMovement['risk'] =
+        summary?.validatorStatus === 'DESCUADRADO' || missingCostCenter
+          ? 'ALTO'
+          : row.status === 'REVIEW'
+            ? 'MEDIO'
+            : 'BAJO';
+
+      return {
+        id: row.id,
+        date: row.date,
+        period: row.period,
+        glosa: row.description,
+        account: row.account,
+        accountName: row.accountName || row.account,
+        costCenter: row.costCenter,
+        debit: toNumber(row.debit),
+        credit: toNumber(row.credit),
+        module: row.sourceModule,
+        status: row.status,
+        hash: row.hash,
+        risk,
+      };
+    });
+  }, [rows, entriesIndex]);
+
+  const selectedAccountLedgerEntries = useMemo(() => {
+    const account = String(selectedRow.account || '').trim();
+    if (!account || account === 'N/A') {
+      return [];
+    }
+
+    return rows
+      .filter((row) => row.account === account)
+      .map((row) => ({
+        id: row.id,
+        date: row.date,
+        voucher: row.entryId ?? row.id,
+        glosa: row.description,
+        hash: row.hash,
+        debe: toNumber(row.debit),
+        haber: toNumber(row.credit),
+      }));
+  }, [rows, selectedRow.account]);
+
   const authHeaders = (bearerToken: string, tenantId = TENANT_ID) => ({
     Authorization: `Bearer ${bearerToken}`,
     'X-Tenant-Id': tenantId,
@@ -472,11 +615,32 @@ export const EnterpriseWorkspace = () => {
     return payload.access_token as string;
   };
 
-  const loadJournal = async (bearerToken: string) => {
+  const getValidToken = async (candidate?: string | null) => {
     const tenantId = getTenantId();
-    const response = await fetch(`${API_BASE}/ledger/journal?year=2026&month=5&limit=250`, {
+    if (candidate && tokenTenantId(candidate) === tenantId) {
+      return candidate;
+    }
+    const generated = await requestDevToken();
+    setToken(generated);
+    return generated;
+  };
+
+  const buildJournalUrl = (period: typeof DEFAULT_PERIOD | null) => {
+    const params = new URLSearchParams({ limit: String(MAX_JOURNAL_ROWS) });
+    if (period) {
+      params.set('year', String(period.year));
+      params.set('month', String(period.month));
+    }
+    return `${API_BASE}/ledger/journal?${params.toString()}`;
+  };
+
+  const loadJournal = async (bearerToken: string, period: typeof DEFAULT_PERIOD | null = null) => {
+    const tenantId = getTenantId();
+    const endpoint = buildJournalUrl(period);
+    const response = await fetch(endpoint, {
       headers: authHeaders(bearerToken, tenantId),
     });
+
     if (!response.ok) {
       throw new Error('No se pudo consultar libro diario');
     }
@@ -489,7 +653,9 @@ export const EnterpriseWorkspace = () => {
       const base = {
         entryId: item.id ?? `JE-${entryIndex + 1}`,
         date: item.entry_date ?? '2026-05-01',
-        period: item.period || '2026-05',
+        period: item.period || String(item.entry_date ?? '').slice(0, 7) || (
+          period ? `${period.year}-${String(period.month).padStart(2, '0')}` : ''
+        ),
         description: item.description || 'Sin descripcion',
         status: statusLabel(item.sunat_status ?? item.status),
         hash: item.row_hash ?? 'sin-hash',
@@ -525,12 +691,36 @@ export const EnterpriseWorkspace = () => {
       }));
     });
 
-    const resultRows = mapped.length ? mapped : seedRows;
+    const resultRows = mapped.length > 0 || !USE_DEMO_ROWS ? mapped : seedRows;
+
+    console.info('CONTA_PRO SELECT /ledger/journal despues de cargar:', {
+      endpoint,
+      tenant_id: tenantId,
+      period: period ?? 'TODOS',
+      rows: resultRows.length,
+      sample: resultRows.slice(0, 5),
+      demo_mode: USE_DEMO_ROWS && mapped.length === 0,
+    });
+
     setRows(resultRows);
-    setSelectedRow(resultRows[0]);
+    setSelectedRow(resultRows[0] ?? emptyJournalRow);
+    setLoading(false);
+
     if (Array.isArray(payload) && payload.length > MAX_JOURNAL_ROWS) {
       setStatusMessage(`Libro diario truncado a ${MAX_JOURNAL_ROWS} asientos para proteger rendimiento.`);
     }
+
+    return resultRows;
+  };
+
+  const loadJournalWithFallback = async (bearerToken: string, period: typeof DEFAULT_PERIOD | null = null) => {
+    const periodRows = await loadJournal(bearerToken, period);
+    if (!period || periodRows.length > 0) {
+      return periodRows;
+    }
+
+    console.warn('CONTA_PRO journal period returned empty; retrying without period filter:', period);
+    return loadJournal(bearerToken, null);
   };
 
   useEffect(() => {
@@ -547,16 +737,21 @@ export const EnterpriseWorkspace = () => {
           return;
         }
         setToken(generatedToken);
-        await loadJournal(generatedToken);
+        await loadJournalWithFallback(generatedToken, DEFAULT_PERIOD);
         setStatusMessage('Conectado: SPA enterprise operando con API real.');
         setAiMessage('Motor IA: Gemini-ready + pgvector-ready.');
       } catch {
         if (cancelled) {
           return;
         }
-        setRows(seedRows);
-        setSelectedRow(seedRows[0]);
-        setStatusMessage('Backend no disponible. Modo local operativo.');
+        const fallbackRows = USE_DEMO_ROWS ? seedRows : [];
+        setRows(fallbackRows);
+        setSelectedRow(fallbackRows[0] ?? emptyJournalRow);
+        setStatusMessage(
+          USE_DEMO_ROWS
+            ? 'Backend no disponible. Modo local operativo.'
+            : 'Backend no disponible. No se muestran datos de prueba; revise conexion/API para ver datos persistidos.'
+        );
         setAiMessage('Motor IA sin conexion.');
       } finally {
         if (!cancelled) {
@@ -570,7 +765,103 @@ export const EnterpriseWorkspace = () => {
     };
   }, []);
 
+  useEffect(() => {
+    if (token && tokenTenantId(token) !== getTenantId()) {
+      void getValidToken(null);
+    }
+  }, [token]);
+
    
+  const postSale = async (salePayload: SaleSubmitPayload) => {
+    const tenantId = getTenantId();
+
+    try {
+      const formSource = salePayload.form;
+      const subtotal = toNumber(salePayload.subtotal ?? formSource.subtotal);
+      const igv = toNumber(salePayload.igv ?? formSource.igv);
+      const total = toNumber(salePayload.total ?? subtotal + igv);
+      const entryDate = salePayload.issueDate || new Date().toISOString().slice(0, 10);
+      const postingPeriod = periodFromIsoDate(entryDate);
+
+      const payload = {
+        tenant_id: tenantId,
+        year: postingPeriod.year,
+        month: postingPeriod.month,
+        invoice_id: `${formSource.serie}-${formSource.number}`,
+        customer_ruc: formSource.customerRuc,
+        customer_name: salePayload.customerName,
+        entry_date: entryDate,
+        doc_type: '01',
+        serie: formSource.serie,
+        number: formSource.number,
+        subtotal,
+        igv,
+        total,
+        currency: 'PEN',
+        revenue_account: formSource.revenueAccount || salePayload.accountLines[0]?.accountCode || '704101',
+        cost_center: formSource.costCenter || salePayload.accountLines[0]?.costCenter || 'LIM-COM',
+        line_items: salePayload.items.map((item) => ({
+          product_code: item.code,
+          description: item.description,
+          unit: item.unit,
+          quantity: toNumber(item.quantity),
+          unit_price: toNumber(item.unitPrice),
+          line_subtotal: toNumber(item.lineSubtotal),
+        })),
+        audit_metadata: {
+          ...salePayload.auditMetadata,
+          items: salePayload.items,
+          account_lines: salePayload.accountLines,
+          accounts_to_upsert: salePayload.accountsToUpsert,
+          cost_centers_to_upsert: salePayload.costCentersToUpsert,
+          guide_remission: salePayload.guideRemission,
+        },
+      };
+
+      console.log('CONTA_PRO salePayload:', salePayload);
+      console.log('CONTA_PRO invoice payload:', payload);
+
+      const saleToken = await getValidToken(token);
+
+      if (!saleToken) {
+        throw new Error('No hay token de seguridad para registrar venta.');
+      }
+
+      const response = await fetch(`${API_BASE}/ledger/invoice`, {
+        method: 'POST',
+        headers: authHeaders(saleToken, tenantId),
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Error invoice:', errorText);
+        throw new Error(errorText);
+      }
+
+      const postedMessage = `Venta ${formSource.serie}-${formSource.number} posteada con cuentas y centros de costo.`;
+      setStatusMessage(postedMessage);
+      setToken(saleToken);
+
+      try {
+        await loadJournalWithFallback(saleToken, postingPeriod);
+        setActivePanel(null);
+      } catch (journalError) {
+        console.warn('CONTA_PRO loadJournal after sale warning:', journalError);
+        setStatusMessage(
+          `${postedMessage} Pendiente refrescar Libro Diario: ${
+            journalError instanceof Error ? journalError.message : 'error desconocido'
+          }`
+        );
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Error desconocido al postear venta.';
+      console.error('CONTA_PRO postSale error:', error);
+      setStatusMessage(`No se pudo postear venta. ${message}`);
+      throw error;
+    }
+  };
+
   const postPurchase = async (purchasePayload?: PurchaseSubmitPayload) => {
     const tenantId = getTenantId();
 
@@ -579,6 +870,8 @@ export const EnterpriseWorkspace = () => {
       const subtotal = toNumber(purchasePayload?.subtotal ?? formSource.subtotal);
       const igv = toNumber(purchasePayload?.igv ?? formSource.igv);
       const total = toNumber(purchasePayload?.total ?? subtotal + igv);
+      const entryDate = purchasePayload?.issueDate || new Date().toISOString().slice(0, 10);
+      const postingPeriod = periodFromIsoDate(entryDate);
 
       const items = purchasePayload?.items ?? [];
       const accountLines = purchasePayload?.accountLines ?? [];
@@ -595,12 +888,13 @@ export const EnterpriseWorkspace = () => {
 
       const payload = {
         tenant_id: tenantId,
-        year: 2026,
-        month: 5,
+        year: postingPeriod.year,
+        month: postingPeriod.month,
         purchase_id: `${formSource.serie}-${formSource.number}`,
         supplier_ruc: formSource.supplierRuc,
         supplier_name: purchasePayload?.supplierName ?? '',
-        issue_date: purchasePayload?.issueDate || new Date().toISOString().slice(0, 10),
+        issue_date: entryDate,
+        entry_date: entryDate,
         doc_type: '01',
         serie: formSource.serie,
         number: formSource.number,
@@ -700,7 +994,22 @@ export const EnterpriseWorkspace = () => {
       // La compra ya fue posteada. Si falla refrescar el Libro Diario,
       // no convertirlo en error de compra ni cerrar la tabla.
       try {
-        await loadJournal(purchaseToken);
+        let refreshedRows = await loadJournalWithFallback(purchaseToken, postingPeriod);
+        let focused = prioritizeDocumentRows(refreshedRows, 'COMPRAS', formSource.serie, formSource.number);
+        if (focused.matchCount === 0) {
+          refreshedRows = await loadJournal(purchaseToken, null);
+          focused = prioritizeDocumentRows(refreshedRows, 'COMPRAS', formSource.serie, formSource.number);
+        }
+        if (focused.matchCount > 0) {
+          setRows(focused.rows);
+          setSelectedRow(focused.rows[0] ?? emptyJournalRow);
+        }
+        setSelectedView('contabilidad');
+        setStatusMessage(
+          focused.matchCount > 0
+            ? `${postedMessage} Libro Diario actualizado: ${focused.matchCount} lineas de la factura visibles arriba.`
+            : `${postedMessage} Libro Diario actualizado; no se pudo enfocar por serie/numero, revise el buscador con ${formSource.serie}-${formSource.number}.`
+        );
         setActivePanel(null);
       } catch (journalError) {
         console.warn('CONTA_PRO loadJournal after purchase warning:', journalError);
@@ -719,7 +1028,7 @@ export const EnterpriseWorkspace = () => {
   };
 
   const exportExcel = () => {
-    const csv = toCsv(rows.map((row) => ({
+    const csv = toCsv(filteredRowsEnhanced.map((row) => ({
       asiento: row.id,
       fecha: row.date,
       periodo: row.period,
@@ -742,7 +1051,9 @@ export const EnterpriseWorkspace = () => {
       setStatusMessage('La ventana de exportacion PDF fue bloqueada por el navegador.');
       return;
     }
-    const lines = filteredRows.slice(0, 30).map((row) => `<tr><td>${row.date}</td><td>${row.period}</td><td>${row.description}</td><td style="text-align:right">${row.debit}</td><td style="text-align:right">${row.credit}</td></tr>`).join('');
+
+    const lines = filteredRowsEnhanced.slice(0, 30).map((row) => `<tr><td>${row.date}</td><td>${row.period}</td><td>${row.description}</td><td style="text-align:right">${row.debit}</td><td style="text-align:right">${row.credit}</td></tr>`).join('');
+
     preview.document.write(`
       <html>
         <head><title>Reporte Diario</title></head>
@@ -808,14 +1119,23 @@ export const EnterpriseWorkspace = () => {
       : 'Checklist de Cierre';
 
   const refreshJournal = async () => {
-    if (token) {
-      await loadJournal(token);
+    try {
+      const currentToken = await getValidToken(token);
+      await loadJournalWithFallback(currentToken, DEFAULT_PERIOD);
       setStatusMessage('Asientos actualizados desde backend.');
-      return;
+    } catch (error) {
+      console.warn('CONTA_PRO refreshJournal warning:', error);
+      const fallbackRows = USE_DEMO_ROWS ? seedRows : [];
+      setRows(fallbackRows);
+      setSelectedRow(fallbackRows[0] ?? emptyJournalRow);
+      setStatusMessage(
+        USE_DEMO_ROWS
+          ? 'Backend no disponible. Modo local operativo.'
+          : `No se pudo refrescar desde backend. No se muestran datos de prueba. ${
+              error instanceof Error ? error.message : 'Error desconocido'
+            }`
+      );
     }
-    setRows(seedRows);
-    setSelectedRow(seedRows[0]);
-    setStatusMessage('Asientos actualizados en modo local.');
   };
 
   const renderPrimaryView = () => {
@@ -826,7 +1146,15 @@ export const EnterpriseWorkspace = () => {
       return <OwnerDashboard />;
     }
     if (selectedView === 'inventario') {
-      return <InventoryDashboard apiBase={API_BASE} token={token} tenantId={TENANT_ID} onStatus={setStatusMessage} />;
+      return (
+        <EnterpriseFulfillmentCommandCenter
+          apiBase={API_BASE}
+          token={token}
+          tenantId={getTenantId()}
+          onStatus={setStatusMessage}
+          onJournalPosted={refreshJournal}
+        />
+      );
     }
     if (selectedView === 'libros') {
       return <BooksCenter apiBase={API_BASE} tenantId={TENANT_ID} />;
@@ -847,10 +1175,33 @@ export const EnterpriseWorkspace = () => {
       return <FinancialDashboard />;
     }
     if (selectedView === 'planillas') {
-      return <PayrollGrid apiBase={HR_API_BASE} token={token} tenantId={TENANT_ID} onStatus={setStatusMessage} />;
+      return <PayrollGrid apiBase={HR_API_BASE} token={token} tenantId={getTenantId()} onStatus={setStatusMessage} onJournalPosted={refreshJournal} />;
     }
     if (selectedView === 'compras') {
       return <AuditHealthDashboard />;
+    }
+
+    if (selectedView === 'contabilidad') {
+      return (
+        <div style={{ height: '100%', minHeight: 0, overflow: 'hidden' }}>
+          <AccountingLivePanel
+            movements={accountingMovements}
+            loading={loading}
+            selectedMovementId={selectedRow.id}
+            statusMessage={statusMessage}
+            aiMessage={aiMessage}
+            onRefresh={() => void refreshJournal()}
+            onExportCsv={exportExcel}
+            onRunAudit={() => void runAi('anomalies')}
+            onSelectMovement={(movement) => {
+              const row = rows.find((item) => item.id === movement.id);
+              if (row) {
+                setSelectedRow(row);
+              }
+            }}
+          />
+        </div>
+      );
     }
     
     if (selectedView === 'contabilidad') {
@@ -979,6 +1330,11 @@ export const EnterpriseWorkspace = () => {
                       </button>
                     );
                   })}
+                  {displayRows.length === 0 && (
+                    <div style={{ padding: 16, color: '#64748b', fontSize: 13 }}>
+                      Sin asientos devueltos por la base de datos para el periodo consultado.
+                    </div>
+                  )}
                 </div>
               )}
             </section>
@@ -986,7 +1342,7 @@ export const EnterpriseWorkspace = () => {
             <aside className="enterprise-neo-card unified-accounting-side">
               <h3 className="unified-analytic-title">DETALLE ANALITICO</h3>
               <div className="unified-analytic-box">
-                {selectedRow ? (
+                {selectedRow.id !== emptyJournalRow.id ? (
                   <div className="unified-analytic-content">
                     {selectedSummary && (() => {
                       const badge = validatorBadge(selectedSummary.validatorStatus, selectedSummary.variance);
@@ -1148,6 +1504,11 @@ export const EnterpriseWorkspace = () => {
                 <span className="hash truncate">{row.hash}</span>
               </button>
             ))}
+            {visibleRows.length === 0 && (
+              <div style={{ padding: 16, color: '#64748b', fontSize: 13 }}>
+                Sin asientos devueltos por la base de datos para el periodo consultado.
+              </div>
+            )}
           </div>
         )}
       </section>
@@ -1188,6 +1549,7 @@ export const EnterpriseWorkspace = () => {
         </aside>
 
         <main className="workspace-main">
+          {selectedView !== 'contabilidad' && (
           <div className="command-bar">
             <div className="command-group">
               <button className="btn-fluent-primary" type="button" onClick={() => setActivePanel('VENTA')}>
@@ -1236,9 +1598,11 @@ export const EnterpriseWorkspace = () => {
               <ArrowClockwise24Regular />
             </button>
           </div>
+          )}
 
-          <div className="status-strip">{statusMessage}</div>
+          {selectedView !== 'contabilidad' && <div className="status-strip">{statusMessage}</div>}
 
+          {selectedView !== 'contabilidad' && (
           <section className="metric-strip">
             {metricCards.map(([label, value]) => (
               <article key={label} className="metric-card">
@@ -1247,11 +1611,13 @@ export const EnterpriseWorkspace = () => {
               </article>
             ))}
           </section>
+          )}
 
           <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             {renderPrimaryView()}
           </div>
 
+          {selectedView !== 'contabilidad' && (
           <footer className="assistant-bar">
             <div className="assistant-title">
               <Bot24Regular />
@@ -1268,6 +1634,7 @@ export const EnterpriseWorkspace = () => {
               )}
             </div>
           </footer>
+          )}
         </main>
       </div>
 
@@ -1279,11 +1646,11 @@ export const EnterpriseWorkspace = () => {
       >
         {activePanel === 'VENTA' && (
           <SaleFormEnterprise
-            token={token}
-            tenantId={TENANT_ID}
+            form={saleForm}
+            onFormChange={setSaleForm}
+            tenantId={getTenantId()}
             onClose={() => setActivePanel(null)}
-            onPosted={refreshJournal}
-            onStatus={setStatusMessage}
+            onSubmit={postSale}
           />
         )}
 
@@ -1320,9 +1687,8 @@ export const EnterpriseWorkspace = () => {
         isOpen={accountDetailOpen}
         onClose={() => setAccountDetailOpen(false)}
       >
-        <LedgerAnalytic accountCode={selectedRow.account} />
+        <LedgerAnalytic accountCode={selectedRow.account} entries={selectedAccountLedgerEntries} />
       </AccountDetailPanel>
     </div>
  );
  };
- 

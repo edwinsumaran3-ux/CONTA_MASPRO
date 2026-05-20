@@ -15,28 +15,7 @@ type LedgerAnalyticProps = {
   entries?: LedgerAnalyticEntry[];
 };
 
-const seedEntries: LedgerAnalyticEntry[] = [
-  {
-    id: '1',
-    date: '2026-05-10',
-    voucher: 'V-000542',
-    glosa: 'Venta F001-8421 cliente enterprise',
-    hash: '9b82c5f',
-    debe: 18880,
-    haber: 0,
-  },
-  {
-    id: '2',
-    date: '2026-05-10',
-    voucher: 'V-000543',
-    glosa: 'Cobranza parcial cliente enterprise',
-    hash: 'ab91f4d',
-    debe: 0,
-    haber: 5000,
-  },
-];
-
-export const LedgerAnalytic = ({ accountCode, entries = seedEntries }: LedgerAnalyticProps) => {
+export const LedgerAnalytic = ({ accountCode, entries = [] }: LedgerAnalyticProps) => {
   const [query, setQuery] = useState('');
 
   const rows = useMemo(() => entries.filter((entry) => entry.glosa.toLowerCase().includes(query.toLowerCase())), [entries, query]);
@@ -55,7 +34,7 @@ export const LedgerAnalytic = ({ accountCode, entries = seedEntries }: LedgerAna
       ...rowsWithBalance.map((entry) => [
         entry.date,
         entry.voucher,
-        entry.glosa.replaceAll(',', ' '),
+        entry.glosa.replace(',', ' '),
         entry.debe.toFixed(2),
         entry.haber.toFixed(2),
         entry.saldo.toFixed(2),
@@ -104,7 +83,13 @@ export const LedgerAnalytic = ({ accountCode, entries = seedEntries }: LedgerAna
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200">
-            {rowsWithBalance.map((entry) => (
+            {rowsWithBalance.length === 0 ? (
+              <tr>
+                <td className="p-6 text-center text-slate-500" colSpan={6}>
+                  Sin movimientos reales para la cuenta seleccionada.
+                </td>
+              </tr>
+            ) : rowsWithBalance.map((entry) => (
               <tr key={entry.id} className="hover:bg-blue-50 transition-colors cursor-pointer group">
                 <td className="p-3 font-medium">{entry.date}</td>
                 <td className="p-3 text-blue-600 font-bold">{entry.voucher}</td>
@@ -123,3 +108,5 @@ export const LedgerAnalytic = ({ accountCode, entries = seedEntries }: LedgerAna
     </div>
   );
 };
+
+
