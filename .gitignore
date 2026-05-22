@@ -1,1 +1,5 @@
 node_modules
+
+.venv_nuevo/
+__pycache__/
+*.pyc

@@ -34,8 +34,8 @@ import { AssetRegister } from '../assets/AssetRegister';
 import { FinancialDashboard } from '../reports/FinancialDashboard';
 import { BooksCenter } from '../reports/BooksCenter';
 import { OwnerDashboard } from '../client-portal/OwnerDashboard';
-import { InventoryDashboard } from '../inventory/InventoryDashboard';
-import ApexLogixCore from '../inventory/ApexLogixCore';
+import ApexLogixCore from '../inventory/EnterpriseFulfillmentCommandCenter';
+
 import { PeriodCloseAction } from './PeriodCloseAction';
 import DashboardEnterprise from '../../components/DashboardEnterprise';
 import AccountingLivePanel, { type AccountingMovement } from '../../components/AccountingLivePanel';
@@ -1062,7 +1062,7 @@ export const EnterpriseWorkspace = () => {
     if (selectedView === 'inventario') {
       return (
         <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-          <ApexLogixCore />
+          <ApexLogixCore apiBase={API_BASE} token={token} tenantId={getTenantId()} onStatus={setStatusMessage} onJournalPosted={refreshJournal} />
         </div>
       );
     }
@@ -1602,3 +1602,4 @@ export const EnterpriseWorkspace = () => {
     </div>
  );
  };
+

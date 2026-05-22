@@ -240,7 +240,7 @@ export const InventoryDashboard = ({ apiBase, token, tenantId, onStatus, onJourn
         <Button appearance="secondary" onClick={reloadAll} disabled={loading || !token}>Refrescar</Button>
       </div>
 
-      <section className="glass-card" style={{ padding: 12, display: 'grid', gap: 8 }}>
+      <section id="inventory-register-form" className="glass-card" style={{ padding: 12, display: 'grid', gap: 8 }}>
         <strong>Crear producto</strong>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 120px 120px 120px', gap: 8 }}>
           <Field label="SKU"><Input value={newProduct.sku} onChange={(_, d) => setNewProduct((p) => ({ ...p, sku: d.value }))} /></Field>
@@ -251,7 +251,7 @@ export const InventoryDashboard = ({ apiBase, token, tenantId, onStatus, onJourn
         </div>
       </section>
 
-      <section className="glass-card" style={{ padding: 12, display: 'grid', gap: 8 }}>
+      <section id="inventory-register-form" className="glass-card" style={{ padding: 12, display: 'grid', gap: 8 }}>
         <strong>Crear almacen</strong>
         <div style={{ display: 'grid', gridTemplateColumns: '180px 1fr 120px', gap: 8 }}>
           <Field label="Codigo"><Input value={newWarehouse.code} onChange={(_, d) => setNewWarehouse((w) => ({ ...w, code: d.value }))} /></Field>
@@ -260,7 +260,7 @@ export const InventoryDashboard = ({ apiBase, token, tenantId, onStatus, onJourn
         </div>
       </section>
 
-      <section className="glass-card" style={{ padding: 12, display: 'grid', gap: 8 }}>
+      <section id="inventory-register-form" className="glass-card" style={{ padding: 12, display: 'grid', gap: 8 }}>
         <strong>Registrar movimiento</strong>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 120px 120px 120px 1fr 140px', gap: 8 }}>
           <Field label="Producto">
@@ -330,3 +330,4 @@ export const InventoryDashboard = ({ apiBase, token, tenantId, onStatus, onJourn
     </div>
   );
 };
+
