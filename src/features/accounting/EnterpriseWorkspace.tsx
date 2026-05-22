@@ -35,6 +35,7 @@ import { FinancialDashboard } from '../reports/FinancialDashboard';
 import { BooksCenter } from '../reports/BooksCenter';
 import { OwnerDashboard } from '../client-portal/OwnerDashboard';
 import { InventoryDashboard } from '../inventory/InventoryDashboard';
+import ApexLogixCore from '../inventory/ApexLogixCore';
 import { PeriodCloseAction } from './PeriodCloseAction';
 import DashboardEnterprise from '../../components/DashboardEnterprise';
 import AccountingLivePanel, { type AccountingMovement } from '../../components/AccountingLivePanel';
@@ -1059,7 +1060,11 @@ export const EnterpriseWorkspace = () => {
       return <OwnerDashboard />;
     }
     if (selectedView === 'inventario') {
-      return <InventoryDashboard apiBase={API_BASE} token={token} tenantId={getTenantId()} onStatus={setStatusMessage} onJournalPosted={refreshJournal} />;
+      return (
+        <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <ApexLogixCore />
+        </div>
+      );
     }
     if (selectedView === 'libros') {
       return <BooksCenter apiBase={API_BASE} tenantId={TENANT_ID} />;
