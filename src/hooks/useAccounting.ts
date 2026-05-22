@@ -14,7 +14,7 @@ type PostEntryPayload = {
 };
 
 const API_BASE = '/api/v1';
-const TENANT_ID = 'tenant-demo';
+const TENANT_ID = localStorage.getItem('tenant_id') || '11111111-1111-1111-1111-111111111111';
 const USER_ID = 'erp.operator';
 
 const sanitizeNumber = (value: number) => (Number.isFinite(value) ? Number(value.toFixed(2)) : 0);
@@ -102,3 +102,4 @@ export const useAccounting = () => {
 
   return { postEntry, validateRUC };
 };
+

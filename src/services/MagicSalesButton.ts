@@ -1,6 +1,6 @@
 const API_BASE = '/api/v1';
-const TENANT_DEMO = 'tenant-demo';
-const USER_DEMO = 'erp.operator';
+const TENANT_DEMO = localStorage.getItem('tenant_id') || '11111111-1111-1111-1111-111111111111';
+const USER_DEMO = localStorage.getItem('user_id') || '22222222-2222-2222-2222-222222222222';
 
 type ScanResultPayload = {
   scan_data?: {
@@ -118,3 +118,4 @@ export async function handleAIVisionProcess(imageFile: File, tenantId = TENANT_D
 }
 
 export default handleAIVisionProcess;
+

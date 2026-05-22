@@ -18,11 +18,7 @@ const receivableRows: ReceivableRow[] = [
   { accountCode: '12.1.4', accountName: 'Cobranza Judicial', majorCode: '129200', pendingInvoices: 4, analytic: 18500 },
 ];
 
-const recentOperations = [
-  { date: '2026-05-10', desc: 'Venta F001-8421 cliente corporativo', debit: 18880, credit: 0, status: 'OK' },
-  { date: '2026-05-09', desc: 'Depreciacion servidores nube', debit: 4200, credit: 0, status: 'OK' },
-  { date: '2026-05-08', desc: 'Provision cobranza dudosa', debit: 1540, credit: 0, status: 'REVIEW' },
-];
+const recentOperations = [];
 
 export const DashboardEnterprisePremium = () => {
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -138,21 +134,21 @@ export const DashboardEnterprisePremium = () => {
               <div className="alert-icon">⚠️</div>
               <div className="alert-text">
                 <h4>Riesgo Fiscal Alto</h4>
-                <p>3 Proveedores No Habidos detectados - Monto: S/ 14,200.50</p>
+                <p>Sin alertas demo</p>
               </div>
             </div>
             <div className="alert alert-warning">
               <div className="alert-icon">⚡</div>
               <div className="alert-text">
                 <h4>Detracciones Pendientes</h4>
-                <p>12 Facturas sin constancia de depósito</p>
+                <p>Sin detracciones pendientes demo</p>
               </div>
             </div>
             <div className="alert alert-info">
               <div className="alert-icon">ℹ️</div>
               <div className="alert-text">
                 <h4>Proyección de Régimen</h4>
-                <p>Empresa al 85% del límite MYPE - Cambio proyectado en julio</p>
+                <p>Sin proyección demo</p>
               </div>
             </div>
           </div>
@@ -175,7 +171,7 @@ export const DashboardEnterprisePremium = () => {
                 <span className="stat-label">Factor IGV</span>
               </div>
               <div className="stat-item">
-                <span className="stat-value">2026-05-31</span>
+                <span className="stat-value">-</span>
                 <span className="stat-label">Cierre Periodo</span>
               </div>
             </div>
@@ -257,3 +253,4 @@ export const DashboardEnterprisePremium = () => {
     </PageLayout>
   );
 };
+
