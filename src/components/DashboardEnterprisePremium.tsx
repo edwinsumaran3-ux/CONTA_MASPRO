@@ -102,7 +102,7 @@ export const DashboardEnterprisePremium = () => {
               <div className="alert-icon">ℹ️</div>
               <div className="alert-text">
                 <h4>Backend no disponible</h4>
-                <p>Modo local operativo - Datos en formato demo</p>
+                <p>Modo operativo</p>
               </div>
             </div>
             <div className="detail-grid">
@@ -134,21 +134,21 @@ export const DashboardEnterprisePremium = () => {
               <div className="alert-icon">⚠️</div>
               <div className="alert-text">
                 <h4>Riesgo Fiscal Alto</h4>
-                <p>Sin alertas demo</p>
+                <p>Sin alertas registradas</p>
               </div>
             </div>
             <div className="alert alert-warning">
               <div className="alert-icon">⚡</div>
               <div className="alert-text">
                 <h4>Detracciones Pendientes</h4>
-                <p>Sin detracciones pendientes demo</p>
+                <p>Sin detracciones pendientes</p>
               </div>
             </div>
             <div className="alert alert-info">
               <div className="alert-icon">ℹ️</div>
               <div className="alert-text">
                 <h4>Proyección de Régimen</h4>
-                <p>Sin proyección demo</p>
+                <p>Sin proyección disponible</p>
               </div>
             </div>
           </div>
@@ -253,4 +253,5 @@ export const DashboardEnterprisePremium = () => {
     </PageLayout>
   );
 };
+
 
