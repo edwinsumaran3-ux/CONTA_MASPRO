@@ -22,7 +22,7 @@ from src.application.services.ledger_posting_service import LedgerPostingService
 from src.application.services.legal_rag_service import HashEmbeddingClient, LegalDocumentInput, LegalRagService
 from src.ai.vector_store import PgVectorAccountingStore
 from src.config import settings
-from src.domain.models.accounting import HrContract, HrWorker, JournalEntry
+from src.domain.models.accounting import AccountingPeriod, HrContract, HrWorker, JournalEntry
 from src.infrastructure.db.session import AsyncSessionLocal
 from src.infrastructure.unit_of_work import UnitOfWork
 
@@ -427,6 +427,27 @@ async def post_payroll_journal(
 
     if not workers:
         raise HTTPException(status_code=422, detail="No hay trabajadores para postear planilla")
+
+    # Auto-create accounting period if it does not exist (avoids PeriodLockedException)
+    async with UnitOfWork(AsyncSessionLocal, payload.tenant_id) as period_uow:
+        period_check = await period_uow.session.execute(
+            select(AccountingPeriod).where(
+                AccountingPeriod.tenant_id == payload.tenant_id,
+                AccountingPeriod.year == payload.year,
+                AccountingPeriod.month == payload.month,
+            )
+        )
+        if not period_check.scalar_one_or_none():
+            period_uow.session.add(
+                AccountingPeriod(
+                    tenant_id=payload.tenant_id,
+                    year=payload.year,
+                    month=payload.month,
+                    status="OPEN",
+                    is_closed=False,
+                )
+            )
+            await period_uow.commit()
 
     gross = _money(sum((Decimal(str(worker.sueldo_pactado or 0)) for worker in workers), Decimal("0.00")))
     pension = _money(sum(

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Field, Input, MessageBar, MessageBarBody, Textarea } from '@fluentui/react-components';
 import { Bot24Regular, DocumentPdf24Regular, PeopleTeam24Regular, ShieldCheckmark24Regular } from '@fluentui/react-icons';
 
@@ -397,6 +397,7 @@ export const PayrollGrid = ({ apiBase = '/api/v1', token = '', tenantId = '', on
   const [requirementDatabase, setRequirementDatabase] = useState<RequirementDatabaseEntry[]>([]);
   const [isExtracting, setIsExtracting] = useState(false);
   const [isUploadingLegalDocs, setIsUploadingLegalDocs] = useState(false);
+  const cvFileRef = useRef<HTMLInputElement>(null);
   const [isValidatingIdentity, setIsValidatingIdentity] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -629,6 +630,14 @@ export const PayrollGrid = ({ apiBase = '/api/v1', token = '', tenantId = '', on
       }
       const batch = Array.isArray(payload.workers_batch) ? payload.workers_batch : [];
       const worker = (payload.worker || (batch[0]?.worker ?? {})) as Record<string, unknown>;
+
+      // Auto-calculate derived financial fields from extracted salary
+      const extractedSalary = Number.parseFloat(String(worker.sueldo_pactado || '0')) || 0;
+      const extractedPension = String(worker.pension_system || 'AFP').toUpperCase();
+      const pensionRate = extractedPension === 'ONP' ? 0.13 : 0.1334;
+      const autoEssalud = extractedSalary > 0 ? (extractedSalary * 0.09).toFixed(2) : null;
+      const autoPension = extractedSalary > 0 ? (extractedSalary * pensionRate).toFixed(2) : null;
+
       const nextRequirements = buildRequirementRecordsFromExtraction(
         worker.requirements,
         worker,
@@ -660,6 +669,9 @@ export const PayrollGrid = ({ apiBase = '/api/v1', token = '', tenantId = '', on
         sueldo_pactado: String(worker.sueldo_pactado || '0.00'),
         pension_system: String(worker.pension_system || prev.pension_system || 'AFP'),
         habilidades_clave: Array.isArray(worker.habilidades_clave) ? worker.habilidades_clave.join(', ') : '',
+        // Auto-calculated from extracted salary (pixel-to-field mapping)
+        ...(autoEssalud !== null ? { essalud: autoEssalud } : {}),
+        ...(autoPension !== null ? { afp_onp_monto: autoPension } : {}),
       }));
       setRequirementRecords(nextRequirements);
       const batchAlerts = batch.length > 1
@@ -906,7 +918,16 @@ export const PayrollGrid = ({ apiBase = '/api/v1', token = '', tenantId = '', on
           : `Planilla ${payload.period} grabada en Libro Diario: ${String(payload.id || '').slice(0, 8)}.`
       );
     } catch (error) {
-      onStatus?.(`No se pudo postear planilla al Libro Diario. ${error instanceof Error ? error.message : 'Error desconocido'}`);
+      let detail = 'Error desconocido';
+      if (error instanceof Error) {
+        try {
+          const parsed = JSON.parse(error.message) as { detail?: string };
+          detail = parsed.detail || error.message;
+        } catch {
+          detail = error.message;
+        }
+      }
+      onStatus?.(`No se pudo postear planilla al Libro Diario: ${detail}`);
     } finally {
       setIsPostingPayroll(false);
     }
@@ -940,7 +961,12 @@ export const PayrollGrid = ({ apiBase = '/api/v1', token = '', tenantId = '', on
           <p>Alta de trabajador, captura de CV, validacion de datos personales y contratos con soporte legal RAG.</p>
         </div>
         <div className="hr-hero-actions">
-          <Button appearance="primary" onClick={postPayrollJournal} disabled={isPostingPayroll || payrollSummary.monthlyPayroll <= 0}>
+          <Button
+            appearance="primary"
+            onClick={postPayrollJournal}
+            disabled={isPostingPayroll || workers.length === 0}
+            title={workers.length === 0 ? 'No hay trabajadores registrados' : 'Registrar planilla en Libro Diario'}
+          >
             {isPostingPayroll ? 'Posteando...' : 'Postear planilla'}
           </Button>
           <label className="hr-hero-upload">
@@ -1004,18 +1030,26 @@ export const PayrollGrid = ({ apiBase = '/api/v1', token = '', tenantId = '', on
           </div>
 
           <div className="hr-upload-row">
-            <label className="hr-upload">
-              <input
-                type="file"
-                accept=".pdf,image/*,.txt"
-                onChange={(event) => {
-                  void extractCv(event.target.files?.[0] || null);
-                  event.currentTarget.value = '';
-                }}
-              />
-              <DocumentPdf24Regular />
-              <span>{isExtracting ? 'Procesando CV...' : 'Adjuntar CV'}</span>
-            </label>
+            {/* Hidden file input triggered by the IA button */}
+            <input
+              ref={cvFileRef}
+              type="file"
+              accept=".pdf,image/*,.txt"
+              style={{ display: 'none' }}
+              onChange={(event) => {
+                void extractCv(event.target.files?.[0] || null);
+                event.currentTarget.value = '';
+              }}
+            />
+            <Button
+              appearance="primary"
+              onClick={() => cvFileRef.current?.click()}
+              disabled={isExtracting}
+              style={{ gap: 6 }}
+            >
+              <Bot24Regular />
+              {isExtracting ? 'Extrayendo con IA...' : 'Extraer CV con IA'}
+            </Button>
 
             <label className="hr-upload">
               <input
