@@ -41,6 +41,7 @@ import DashboardEnterprise from '../../components/DashboardEnterprise';
 import AccountingLivePanel, { type AccountingMovement } from '../../components/AccountingLivePanel';
 import AccountDetailPanel from '../../components/AccountDetailPanel';
 import { LedgerAnalytic } from './LedgerAnalytic';
+import { hasFeature, type Plan } from '../../config/planFeatures';
 
 type JournalLineDetail = {
   id?: string;
@@ -240,18 +241,18 @@ const metricCards = [
 ];
 
 const railItems = [
-  { id: 'dashboard', label: 'Dashboard', icon: Home24Regular },
-  { id: 'contabilidad', label: 'Contabilidad', icon: DocumentTable24Regular },
-  { id: 'libros', label: 'Libros', icon: ClipboardTask24Regular },
-  { id: 'inventario', label: 'Inventario', icon: Database24Regular },
-  { id: 'owner', label: 'Owner Portal', icon: Database24Regular },
-  { id: 'ventas', label: 'Ventas', icon: Receipt24Regular },
-  { id: 'compras', label: 'Compras', icon: Money24Regular },
-  { id: 'tesoreria', label: 'Tesoreria', icon: Wallet24Regular },
-  { id: 'cxcxp', label: 'CXC/CXP', icon: BuildingBank24Regular },
-  { id: 'planillas', label: 'Planillas', icon: PersonMoney24Regular },
-  { id: 'integraciones', label: 'Integraciones', icon: Database24Regular },
-  { id: 'config', label: 'Configuracion', icon: SlideSettings24Regular },
+  { id: 'dashboard',      label: 'Dashboard',       icon: Home24Regular,           feature: null },
+  { id: 'contabilidad',   label: 'Contabilidad',    icon: DocumentTable24Regular,  feature: null },
+  { id: 'libros',         label: 'Libros',           icon: ClipboardTask24Regular,  feature: null },
+  { id: 'ventas',         label: 'Ventas',           icon: Receipt24Regular,        feature: null },
+  { id: 'compras',        label: 'Compras',          icon: Money24Regular,          feature: null },
+  { id: 'tesoreria',      label: 'Tesoreria',        icon: Wallet24Regular,         feature: null },
+  { id: 'cxcxp',          label: 'CXC/CXP',          icon: BuildingBank24Regular,   feature: null },
+  { id: 'inventario',     label: 'Inventario',       icon: Database24Regular,       feature: 'inventory' },
+  { id: 'planillas',      label: 'Planillas',        icon: PersonMoney24Regular,    feature: 'payroll' },
+  { id: 'integraciones',  label: 'Integraciones',    icon: Database24Regular,       feature: 'integrations' },
+  { id: 'owner',          label: 'Owner Portal',     icon: Database24Regular,       feature: 'advanced_bi' },
+  { id: 'config',         label: 'Configuracion',    icon: SlideSettings24Regular,  feature: null },
 ];
 
 const toNumber = (value: string | number | undefined | null) => {
@@ -318,7 +319,20 @@ export const EnterpriseWorkspace = () => {
   const [copilotQuestion, setCopilotQuestion] = useState('Detecta riesgos SUNAT y diferencias materiales de mayo 2026.');
   const [isRunningAi, setIsRunningAi] = useState(false);
   const [selectedView, setSelectedView] = useState('dashboard');
-  const [accountDetailOpen, setAccountDetailOpen] = useState(false);
+  
+const currentPlan = (() => {
+  try {
+    const token = localStorage.getItem('access_token') || '';
+    if (!token) return 'BASIC';
+    const payload = token.split('.')[1];
+    const padded = payload.padEnd(payload.length + ((4 - (payload.length % 4)) % 4), '=');
+    const decoded = JSON.parse(atob(padded.replace(/-/g, '+').replace(/_/g, '/')));
+    return (decoded.plan as Plan) || 'BASIC';
+  } catch {
+    return 'BASIC';
+  }
+})();
+const [accountDetailOpen, setAccountDetailOpen] = useState(false);
   const bootstrapRanRef = useRef(false);
 
   const [saleForm, setSaleForm] = useState<SaleFormData>({
@@ -1448,14 +1462,38 @@ export const EnterpriseWorkspace = () => {
           onMouseLeave={() => setRailExpanded(false)}
         >
           {railItems.map((item) => {
-            const Icon = item.icon;
+          const Icon = item.icon;
+          const locked = item.feature ? !hasFeature(currentPlan, item.feature as any) : false;
+
+          if (locked) {
             return (
-              <button key={item.id} className={`rail-item nav-link ${selectedView === item.id ? 'active' : ''}`} type="button" onClick={() => setSelectedView(item.id)}>
-                <Icon />
-                <span className="rail-label">{item.label}</span>
-              </button>
+              <div
+                key={item.id}
+                className="rail-item nav-link locked"
+                title="Disponible en plan superior"
+                style={{ opacity: 0.45, cursor: 'not-allowed', display: 'flex', alignItems: 'center', gap: 8 }}
+              >
+                <LockClosed24Regular style={{ color: '#475569' }} />
+                <span className="rail-label" style={{ color: '#475569' }}>{item.label}</span>
+              </div>
             );
-          })}
+          }
+
+          return (
+            <button
+              key={item.id}
+              className={`rail-item nav-link ${selectedView === item.id ? 'active' : ''}`}
+              type="button"
+              onClick={() => {
+                if (typeof setSelectedView !== 'undefined') setSelectedView(item.id);
+                }}
+              title={item.label}
+            >
+              <Icon />
+              <span className="rail-label">{item.label}</span>
+            </button>
+          );
+        })}
         </aside>
 
         <main className="workspace-main">
@@ -1602,4 +1640,5 @@ export const EnterpriseWorkspace = () => {
     </div>
  );
  };
+
 

@@ -1,8 +1,17 @@
+# =============================================================================
+#  src/infrastructure/security/auth.py
+#  EDITAR — reemplaza el archivo completo
+#
+#  Cambio único: agregar parámetro `plan` a create_access_token
+#  y firmarlo dentro del payload del JWT.
+# =============================================================================
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta
 from hashlib import sha256
 from uuid import uuid4
+
 from jose import jwt
 from passlib.context import CryptContext
 
@@ -11,23 +20,36 @@ from src.config import settings
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 ALGORITHM = "RS256"
 
+
 class TokenService:
-    def __init__(self, private_key: str | None = None, public_key: str | None = None):
+    def __init__(
+        self,
+        private_key: str | None = None,
+        public_key: str | None = None,
+    ):
         self.private_key = private_key
         self.public_key = public_key
 
-    def create_access_token(self, *, tenant_id: str, user_id: str, role: str) -> str:
+    def create_access_token(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        role: str,
+        plan: str = "BASIC",          # ← NUEVO parámetro
+    ) -> str:
         now = datetime.utcnow()
         payload = {
-            "sub": user_id,
+            "sub":       user_id,
             "tenant_id": tenant_id,
-            "role": role,
-            "type": "access",
-            "iat": now,
-            "exp": now + timedelta(minutes=settings.access_token_minutes),
-            "jti": str(uuid4()),
+            "role":      role,
+            "plan":      plan,         # ← NUEVO campo en el token
+            "type":      "access",
+            "iat":       now,
+            "exp":       now + timedelta(minutes=settings.access_token_minutes),
+            "jti":       str(uuid4()),
         }
-        # In producción usar RSA desde secrets. HS fallback permite desarrollo controlado.
+        # Producción usa RSA desde secrets. HS256 como fallback de desarrollo.
         if self.private_key:
             return jwt.encode(payload, self.private_key, algorithm=ALGORITHM)
         return jwt.encode(payload, settings.ledger_hmac_secret, algorithm="HS256")
@@ -35,7 +57,9 @@ class TokenService:
     def verify_access_token(self, token: str) -> dict:
         if self.public_key:
             return jwt.decode(token, self.public_key, algorithms=[ALGORITHM])
-        return jwt.decode(token, settings.ledger_hmac_secret, algorithms=["HS256"])
+        return jwt.decode(
+            token, settings.ledger_hmac_secret, algorithms=["HS256"]
+        )
 
     @staticmethod
     def hash_refresh_token(token: str) -> str:
@@ -45,8 +69,10 @@ class TokenService:
     def new_refresh_token() -> str:
         return str(uuid4()) + "." + str(uuid4())
 
+
 def verify_password(plain: str, hashed: str) -> bool:
     return pwd_context.verify(plain, hashed)
+
 
 def hash_password(plain: str) -> str:
     return pwd_context.hash(plain)
