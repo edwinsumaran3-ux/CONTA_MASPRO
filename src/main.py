@@ -7,7 +7,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+try:
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor as _FastAPIInstrumentor
+    _otel_available = True
+except ImportError:
+    _otel_available = False
 from src.api.routes.ai import router as ai_router
 from src.api.routes.auth import router as auth_router
 from src.api.routes.business_intelligence import router as bi_router
@@ -77,7 +81,8 @@ def create_app() -> FastAPI:
     app.include_router(hr_router, prefix="/api/v1")
     app.include_router(integrations_router, prefix="/api/v1")
     app.include_router(events_router, prefix="/api/v1")
-    FastAPIInstrumentor.instrument_app(app)
+    if _otel_available:
+        _FastAPIInstrumentor.instrument_app(app)
     return app
 
 app = create_app()

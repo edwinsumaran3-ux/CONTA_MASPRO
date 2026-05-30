@@ -11,6 +11,7 @@ from src.application.services.invoice_gemini_extractor import InvoiceGeminiExtra
 from src.application.services.sunat_realtime_verifier import SunatRealtimeVerifier
 from src.config import settings
 from src.infrastructure.adapters.ai.gemini import GeminiClient
+from src.infrastructure.adapters.ai.vision_provider import get_vision_client, is_vision_available, active_provider_name
 from src.infrastructure.db.session import AsyncSessionLocal
 from src.infrastructure.unit_of_work import UnitOfWork
 
@@ -88,7 +89,7 @@ async def extract_invoice(
             parsed_fields = [part.strip() for part in target_fields.split(",") if part.strip()]
 
     extractor = InvoiceGeminiExtractor(
-        GeminiClient(settings.gemini_api_key, settings.gemini_model),
+        get_vision_client(),
         SunatRealtimeVerifier(
             ruc_lookup_url=settings.sunat_ruc_lookup_url,
             cpe_lookup_url=settings.sunat_cpe_lookup_url,
@@ -109,6 +110,10 @@ async def extract_invoice(
 @router.get("/config/status")
 async def ai_config_status():
     return {
+        "vision_available": is_vision_available(),
+        "active_provider": active_provider_name(),
+        "claude_configured": bool(settings.claude_api_key),
+        "claude_model": settings.claude_model,
         "gemini_configured": bool(settings.gemini_api_key),
-        "model": settings.gemini_model,
+        "gemini_model": settings.gemini_model,
     }

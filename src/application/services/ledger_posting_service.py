@@ -8,7 +8,7 @@ from src.application.services.expert_accounting_guard import ExpertAccountingGua
 from src.application.services.sunat_realtime_verifier import SunatRealtimeVerifier
 from src.config import settings
 from src.domain.exceptions import PeriodLockedException, TenantRequiredException, UnbalancedEntryException
-from src.domain.models.accounting import AuditLog, FinancialDocument, JournalEntry, JournalLine, OutboxEvent
+from src.domain.models.accounting import AccountingPeriod, AuditLog, FinancialDocument, JournalEntry, JournalLine, OutboxEvent
 from sqlalchemy import and_, select
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import selectinload
@@ -182,8 +182,19 @@ class LedgerPostingService:
         async with self.uow_factory(tenant_id) as uow:
             repo = LedgerRepository(uow.session)
             period = await repo.get_period_for_update(tenant_id, int(payload["year"]), int(payload["month"]))
-            if not period or period.is_closed:
-                raise PeriodLockedException("Periodo contable bloqueado")
+            if period and period.is_closed:
+                raise PeriodLockedException("Periodo contable cerrado")
+            if not period:
+                period = AccountingPeriod(
+                    id=uuid4(),
+                    tenant_id=tenant_id,
+                    year=int(payload["year"]),
+                    month=int(payload["month"]),
+                    status="OPEN",
+                    is_closed=False,
+                )
+                uow.session.add(period)
+                await uow.session.flush()
 
             company_id = payload.get("company_id")
             lines = [
@@ -293,9 +304,18 @@ class LedgerPostingService:
         doc_type = purchase_data.get("doc_type", "01")
         serie = str(purchase_data.get("serie") or "").strip().upper()
         number = str(purchase_data.get("number") or "").strip()
-        document_date = purchase_data.get("entry_date") or purchase_data.get("issue_date") or date.today()
+        # Fecha de registro = entry_date (hoy, cuando se ingresa el documento)
+        document_date = purchase_data.get("entry_date") or date.today()
         if isinstance(document_date, str):
             document_date = date.fromisoformat(document_date[:10])
+        # Fecha de emisión del comprobante = issue_date (puede ser de períodos anteriores)
+        invoice_issue_date_raw = purchase_data.get("issue_date") or document_date
+        if isinstance(invoice_issue_date_raw, str):
+            invoice_issue_date_raw = date.fromisoformat(invoice_issue_date_raw[:10])
+        invoice_issue_date: date = invoice_issue_date_raw
+        # El período contable usa la fecha de REGISTRO (entry_date = hoy)
+        purchase_data["year"] = document_date.year
+        purchase_data["month"] = document_date.month
 
         # Regla profesional de duplicados:
         # Un comprobante de compras AP no puede registrarse dos veces.
@@ -528,10 +548,26 @@ class LedgerPostingService:
                 )
             await uow.commit()
 
+        # Alerta de anotación tardía: comprobante de período anterior registrado hoy
+        late_registration_alert: str | None = None
+        if invoice_issue_date and document_date:
+            months_diff = (document_date.year - invoice_issue_date.year) * 12 + (document_date.month - invoice_issue_date.month)
+            if months_diff > 0:
+                late_registration_alert = (
+                    f"ANOTACION TARDIA: Comprobante emitido el {invoice_issue_date.isoformat()} "
+                    f"registrado en período {document_date.strftime('%Y-%m')} "
+                    f"({months_diff} mes(es) de diferencia). "
+                    f"Verificar anotación oportuna para crédito fiscal IGV (máx. 12 meses) "
+                    f"y deducibilidad del gasto en el período correcto."
+                )
+                logger.warning("CONTA_PRO late_registration tenant=%s serie=%s-%s issue=%s entry=%s diff_months=%d",
+                    tenant_id, serie, number, invoice_issue_date, document_date, months_diff)
+
         financial_metadata = self._json_safe({
             "supplier_ruc": supplier_ruc,
             "supplier_name": purchase_data.get("supplier_name"),
             "sire_ready": True,
+            "late_registration_alert": late_registration_alert,
             "detraccion_amount": str(detraccion),
             "percepcion_amount": str(percepcion),
             "retencion_amount": str(retencion),
@@ -563,7 +599,7 @@ class LedgerPostingService:
                 "document_type": doc_type,
                 "series": serie,
                 "number": number,
-                "issue_date": document_date,
+                "issue_date": invoice_issue_date,
                 "due_date": purchase_data.get("due_date"),
                 "currency": purchase_data.get("currency", "PEN"),
                 "exchange_rate": purchase_data.get("exchange_rate"),
@@ -600,9 +636,24 @@ class LedgerPostingService:
 
         async with self.uow_factory(tenant_id) as uow:
             repo = LedgerRepository(uow.session)
-            period = await repo.get_period_for_update(tenant_id, int(invoice_data["year"]), int(invoice_data["month"]))
-            if not period or period.is_closed:
-                raise PeriodLockedException("Periodo contable bloqueado")
+            # Derivar período de la fecha real de la factura
+            invoice_date = self._as_date(invoice_data.get("entry_date"))
+            invoice_data["year"] = invoice_date.year
+            invoice_data["month"] = invoice_date.month
+            period = await repo.get_period_for_update(tenant_id, invoice_date.year, invoice_date.month)
+            if period and period.is_closed:
+                raise PeriodLockedException("Periodo contable cerrado")
+            if not period:
+                period = AccountingPeriod(
+                    id=uuid4(),
+                    tenant_id=tenant_id,
+                    year=invoice_date.year,
+                    month=invoice_date.month,
+                    status="OPEN",
+                    is_closed=False,
+                )
+                uow.session.add(period)
+                await uow.session.flush()
 
             subtotal = Decimal(str(invoice_data["subtotal"]))
             igv = Decimal(str(invoice_data["igv"]))

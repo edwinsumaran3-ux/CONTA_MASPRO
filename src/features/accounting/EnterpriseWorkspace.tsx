@@ -38,7 +38,7 @@ import ApexLogixCore from '../inventory/EnterpriseFulfillmentCommandCenter';
 
 import { PeriodCloseAction } from './PeriodCloseAction';
 import DashboardEnterprise from '../../components/DashboardEnterprise';
-import AccountingLivePanel, { type AccountingMovement } from '../../components/AccountingLivePanel';
+import AccountingLivePanel, { type AccountingMovement, type ChartAccountItem } from '../../components/AccountingLivePanel';
 import AccountDetailPanel from '../../components/AccountDetailPanel';
 import { LedgerAnalytic } from './LedgerAnalytic';
 import { hasFeature, type Plan } from '../../config/planFeatures';
@@ -150,7 +150,6 @@ const TENANT_ID = '11111111-1111-1111-1111-111111111111';
 const USER_ID = 'erp.operator';
 const MAX_JOURNAL_ROWS = 3000;
 const MAX_RENDER_ROWS = 1200;
-const USE_DEMO_ROWS = false;
 const _today = new Date();
 const DEFAULT_PERIOD = { year: _today.getFullYear(), month: _today.getMonth() + 1 };
 
@@ -211,13 +210,6 @@ const formatMoney = (value: string | number | undefined | null) => {
 };
 
 
-const seedRows: JournalRow[] = [
-  { id: 'JE-2026-000184', date: '2026-05-10', period: '2026-05', description: 'Venta F001-8421 cliente enterprise', account: '1212', costCenter: 'LIM-COM', debit: '18,880.00', credit: '0.00', status: 'SUNAT', hash: '9b82c5f0f6e4142a', sourceModule: 'VENTAS' },
-  { id: 'JE-2026-000183', date: '2026-05-10', period: '2026-05', description: 'IGV venta F001-8421', account: '4011', costCenter: 'LIM-COM', debit: '0.00', credit: '2,880.00', status: 'SUNAT', hash: '715ece7f3a0a920b', sourceModule: 'VENTAS' },
-  { id: 'JE-2026-000182', date: '2026-05-09', period: '2026-05', description: 'Depreciacion servidores nube', account: '681', costCenter: 'TI-CORE', debit: '4,200.00', credit: '0.00', status: 'POSTED', hash: '71dcb0bc69c0db87', sourceModule: 'ACTIVOS' },
-  { id: 'JE-2026-000181', date: '2026-05-09', period: '2026-05', description: 'Diferencia de cambio cartera USD', account: '676', costCenter: 'FIN-TES', debit: '930.40', credit: '0.00', status: 'POSTED', hash: 'ebc76550a47cb24d', sourceModule: 'TESORERIA' },
-  { id: 'JE-2026-000180', date: '2026-05-08', period: '2026-05', description: 'Provision cobranza dudosa', account: '684', costCenter: 'FIN-CXC', debit: '1,540.00', credit: '0.00', status: 'REVIEW', hash: 'b41c9e310a946145', sourceModule: 'CXC/CXP' },
-];
 
 const emptyJournalRow: JournalRow = {
   id: 'EMPTY-JOURNAL-SELECTION',
@@ -315,8 +307,8 @@ const parseBackendError = async (response: Response): Promise<string> => {
 
 export const EnterpriseWorkspace = () => {
 
-  const [rows, setRows] = useState<JournalRow[]>(USE_DEMO_ROWS ? seedRows : []);
-  const [selectedRow, setSelectedRow] = useState<JournalRow>(USE_DEMO_ROWS ? seedRows[0] : emptyJournalRow);
+  const [rows, setRows] = useState<JournalRow[]>([]);
+  const [selectedRow, setSelectedRow] = useState<JournalRow>(emptyJournalRow);
   const [token, setToken] = useState('');
   const [loading, setLoading] = useState(true);
   const [railExpanded, setRailExpanded] = useState(false);
@@ -340,6 +332,7 @@ const currentPlan = (() => {
   }
 })();
 const [accountDetailOpen, setAccountDetailOpen] = useState(false);
+  const [chartAccounts, setChartAccounts] = useState<ChartAccountItem[]>([]);
   const bootstrapRanRef = useRef(false);
 
   const [saleForm, setSaleForm] = useState<SaleFormData>({
@@ -381,6 +374,7 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
     sourceModule: '',
   });
 
+  const [selectedYear, setSelectedYear] = useState<number>(_today.getFullYear());
   const [viewMode, setViewMode] = useState<'FLAT' | 'GROUPED'>('FLAT');
   const [expandedEntries, setExpandedEntries] = useState<Set<string>>(new Set());
   const [quickFilters, setQuickFilters] = useState<QuickFilters>({
@@ -606,18 +600,28 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
     return generated;
   };
 
-  const buildJournalUrl = (period: typeof DEFAULT_PERIOD | null) => {
-    const params = new URLSearchParams({ limit: String(MAX_JOURNAL_ROWS) });
-    if (period) {
-      params.set('year', String(period.year));
-      params.set('month', String(period.month));
+  const loadChartAccounts = async (bearerToken: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/master/chart-accounts`, {
+        headers: authHeaders(bearerToken, getTenantId()),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setChartAccounts(Array.isArray(data) ? data : []);
+      }
+    } catch {
+      // no bloquea la carga principal
     }
+  };
+
+  const buildJournalUrl = (year: number) => {
+    const params = new URLSearchParams({ limit: String(MAX_JOURNAL_ROWS), year: String(year) });
     return `${API_BASE}/ledger/journal?${params.toString()}`;
   };
 
-  const loadJournal = async (bearerToken: string, period: typeof DEFAULT_PERIOD | null = null) => {
+  const loadJournal = async (bearerToken: string, year: number = selectedYear) => {
     const tenantId = getTenantId();
-    const endpoint = buildJournalUrl(period);
+    const endpoint = buildJournalUrl(year);
     const response = await fetch(endpoint, {
       headers: authHeaders(bearerToken, tenantId),
     });
@@ -634,9 +638,7 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
       const base = {
         entryId: item.id ?? `JE-${entryIndex + 1}`,
         date: item.entry_date ?? '2026-05-01',
-        period: item.period || String(item.entry_date ?? '').slice(0, 7) || (
-          period ? `${period.year}-${String(period.month).padStart(2, '0')}` : ''
-        ),
+        period: item.period || String(item.entry_date ?? '').slice(0, 7),
         description: item.description || 'Sin descripcion',
         status: statusLabel(item.sunat_status ?? item.status),
         hash: item.row_hash ?? 'sin-hash',
@@ -673,15 +675,13 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
     });
 
     mapped.sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id));
-    const resultRows = mapped.length > 0 || !USE_DEMO_ROWS ? mapped : seedRows;
+    const resultRows = mapped;
 
-    console.info('CONTA_PRO SELECT /ledger/journal despues de cargar:', {
+    console.info('CONTA_PRO SELECT /ledger/journal cargado:', {
       endpoint,
       tenant_id: tenantId,
-      period: period ?? 'TODOS',
+      year,
       rows: resultRows.length,
-      sample: resultRows.slice(0, 5),
-      demo_mode: USE_DEMO_ROWS && mapped.length === 0,
     });
 
     setRows(resultRows);
@@ -708,21 +708,19 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
           return;
         }
         setToken(generatedToken);
-        await loadJournal(generatedToken);
+        await Promise.all([
+          loadJournal(generatedToken),
+          loadChartAccounts(generatedToken),
+        ]);
         setStatusMessage('Conectado: SPA enterprise operando con API real.');
         setAiMessage('Motor IA: Gemini-ready + pgvector-ready.');
       } catch {
         if (cancelled) {
           return;
         }
-        const fallbackRows = USE_DEMO_ROWS ? seedRows : [];
-        setRows(fallbackRows);
-        setSelectedRow(fallbackRows[0] ?? emptyJournalRow);
-        setStatusMessage(
-          USE_DEMO_ROWS
-            ? 'Backend no disponible. Modo local operativo.'
-            : 'Backend no disponible. No se muestran datos de prueba; revise conexion/API para ver datos persistidos.'
-        );
+        setRows([]);
+        setSelectedRow(emptyJournalRow);
+        setStatusMessage('Backend no disponible. Verifique la conexión con la API.');
         setAiMessage('Motor IA sin conexion.');
       } finally {
         if (!cancelled) {
@@ -742,6 +740,22 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
     }
   }, [token]);
 
+  // Auto-refresco del libro diario cada 60 segundos
+  useEffect(() => {
+    if (!token) return;
+    const interval = setInterval(async () => {
+      try {
+        const currentToken = await getValidToken(token);
+        if (currentToken) {
+          await loadJournal(currentToken, selectedYear);
+        }
+      } catch {
+        // no bloquea la UI si falla el refresco automático
+      }
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [token, selectedYear]);
+
    
   const postSale = async (salePayload: SaleSubmitPayload) => {
     const tenantId = getTenantId();
@@ -751,7 +765,7 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
       const subtotal = toNumber(salePayload.subtotal ?? formSource.subtotal);
       const igv = toNumber(salePayload.igv ?? formSource.igv);
       const total = toNumber(salePayload.total ?? subtotal + igv);
-      const entryDate = salePayload.issueDate || new Date().toISOString().slice(0, 10);
+      const entryDate = salePayload.issueDate || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
       const postingPeriod = periodFromIsoDate(entryDate);
 
       const payload = {
@@ -842,7 +856,10 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
       const subtotal = toNumber(purchasePayload?.subtotal ?? formSource.subtotal);
       const igv = toNumber(purchasePayload?.igv ?? formSource.igv);
       const total = toNumber(purchasePayload?.total ?? subtotal + igv);
-      const entryDate = purchasePayload?.issueDate || new Date().toISOString().slice(0, 10);
+      // Fecha de registro = HOY en hora Perú (UTC-5), no UTC
+      const entryDate = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
+      // Fecha de emisión del comprobante = la que leyó la IA o ingresó el usuario
+      const issueDate = purchasePayload?.issueDate || entryDate;
       const postingPeriod = periodFromIsoDate(entryDate);
 
       const items = purchasePayload?.items ?? [];
@@ -865,7 +882,7 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
         purchase_id: `${formSource.serie}-${formSource.number}`,
         supplier_ruc: formSource.supplierRuc,
         supplier_name: purchasePayload?.supplierName ?? '',
-        issue_date: entryDate,
+        issue_date: issueDate,
         entry_date: entryDate,
         doc_type: '01',
         serie: formSource.serie,
@@ -1079,19 +1096,17 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
   const refreshJournal = async () => {
     try {
       const currentToken = await getValidToken(token);
-      await loadJournal(currentToken);
+      await Promise.all([
+        loadJournal(currentToken, selectedYear),
+        loadChartAccounts(currentToken),
+      ]);
       setStatusMessage('Asientos actualizados desde backend.');
     } catch (error) {
       console.warn('CONTA_PRO refreshJournal warning:', error);
-      const fallbackRows = USE_DEMO_ROWS ? seedRows : [];
-      setRows(fallbackRows);
-      setSelectedRow(fallbackRows[0] ?? emptyJournalRow);
+      setRows([]);
+      setSelectedRow(emptyJournalRow);
       setStatusMessage(
-        USE_DEMO_ROWS
-          ? 'Backend no disponible. Modo local operativo.'
-          : `No se pudo refrescar desde backend. No se muestran datos de prueba. ${
-              error instanceof Error ? error.message : 'Error desconocido'
-            }`
+        `No se pudo refrescar desde backend. ${error instanceof Error ? error.message : 'Error desconocido'}`
       );
     }
   };
@@ -1140,6 +1155,7 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
         <div style={{ height: '100%', minHeight: 0, overflow: 'hidden' }}>
           <AccountingLivePanel
             movements={accountingMovements}
+            chartAccounts={chartAccounts}
             loading={loading}
             selectedMovementId={selectedRow.id}
             statusMessage={statusMessage}
@@ -1177,6 +1193,21 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
                     appearance={viewMode === 'GROUPED' ? 'primary' : 'subtle'}
                     onClick={() => setViewMode('GROUPED')}
                   >Agrupada por asiento</Button>
+                </div>
+                <div className="enterprise-toolbar-year" style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600 }}>
+                  <Button size="small" appearance="subtle" onClick={async () => {
+                    const y = selectedYear - 1;
+                    setSelectedYear(y);
+                    const t = await getValidToken(token);
+                    if (t) await loadJournal(t, y);
+                  }}>{'<'}</Button>
+                  <span style={{ minWidth: 60, textAlign: 'center' }}>Ejercicio {selectedYear}</span>
+                  <Button size="small" appearance="subtle" onClick={async () => {
+                    const y = selectedYear + 1;
+                    setSelectedYear(y);
+                    const t = await getValidToken(token);
+                    if (t) await loadJournal(t, y);
+                  }}>{'>'}</Button>
                 </div>
                 <div className="enterprise-toolbar-quickfilters">
                   <Checkbox
@@ -1665,7 +1696,14 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
         isOpen={accountDetailOpen}
         onClose={() => setAccountDetailOpen(false)}
       >
-        <LedgerAnalytic accountCode={selectedRow.account} />
+        <LedgerAnalytic
+          accountCode={selectedRow.account}
+          accountName={selectedRow.accountName}
+          apiBase={API_BASE}
+          token={token}
+          tenantId={getTenantId()}
+          year={DEFAULT_PERIOD.year}
+        />
       </AccountDetailPanel>
     </div>
  );

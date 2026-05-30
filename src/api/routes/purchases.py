@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import json
 import mimetypes
 import re
@@ -11,6 +10,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
 from src.api.dependencies import get_current_context
 from src.config import settings
+from src.infrastructure.adapters.ai.vision_provider import get_vision_client, is_vision_available, active_provider_name
 
 router = APIRouter(prefix="/purchases", tags=["Purchases IA"])
 
@@ -158,6 +158,7 @@ PCGE_RULE_LIBRARY = [
     },
 ]
 
+# ─── OSINERGMIN: Electricidad ────────────────────────────────────────────────
 ELECTRIC_REGULATED_RULES = [
     {
         "keywords": ("APORTE LEY", "LEY 28749", "LEY NRO. 28749", "LEY NRO 28749"),
@@ -167,39 +168,163 @@ ELECTRIC_REGULATED_RULES = [
         "tax_treatment": "Cargo regulado Ley 28749 no afecto al IGV; subcuenta de electricidad.",
     },
     {
-        "keywords": ("FOSE", "FISE", "LEY 27510"),
+        "keywords": ("FOSE", "FISE", "LEY 27510", "FONDO SOCIAL"),
         "account_code": "636106",
         "account_name": "Energia electrica - FOSE/FISE",
         "taxable": False,
-        "tax_treatment": "Cargo regulado FOSE/FISE; no afecto al IGV.",
+        "tax_treatment": "Cargo regulado FOSE/FISE no afecto al IGV.",
     },
     {
-        "keywords": ("ALUMBRADO PUBLICO", "ALUMBRADO PÚBLICO"),
+        "keywords": ("ALUMBRADO PUBLICO", "ALUMBRADO PÚBLICO", "MRSE ALUMBRADO"),
         "account_code": "636103",
         "account_name": "Energia electrica - Alumbrado publico",
         "taxable": True,
         "tax_treatment": "Cargo regulado de alumbrado publico afecto al IGV.",
     },
     {
-        "keywords": ("CARGO FIJO",),
+        "keywords": ("CARGO FIJO", "CARGO FIJO ELECTRICIDAD"),
         "account_code": "636102",
         "account_name": "Energia electrica - Cargo fijo",
         "taxable": True,
         "tax_treatment": "Cargo fijo regulado del servicio electrico afecto al IGV.",
     },
     {
-        "keywords": ("REPOSICION Y MANTENIMIENTO", "REPOSICIÓN Y MANTENIMIENTO", "REPOSICION", "REPOSICIÓN", "MANTENIMIENTO ELECTRICO", "MANTENIMIENTO ELÉCTRICO"),
+        "keywords": (
+            "REPOSICION Y MANTENIMIENTO", "REPOSICIÓN Y MANTENIMIENTO",
+            "REPOSICION", "REPOSICIÓN", "MANTENIMIENTO ELECTRICO", "MANTENIMIENTO ELÉCTRICO",
+            "CARGO POR REPOSICION",
+        ),
         "account_code": "636104",
         "account_name": "Energia electrica - Reposicion y mantenimiento",
         "taxable": True,
         "tax_treatment": "Cargo regulado de reposicion y mantenimiento afecto al IGV.",
     },
     {
-        "keywords": ("ENERGIA ACTIVA", "ENERGÍA ACTIVA", "CONSUMO ACTIVO"),
+        "keywords": (
+            "ENERGIA ACTIVA", "ENERGÍA ACTIVA", "CONSUMO ACTIVO",
+            "ENERGIA REACTIVA", "ENERGÍA REACTIVA", "POTENCIA",
+        ),
         "account_code": "636101",
         "account_name": "Energia electrica - Consumo activo",
         "taxable": True,
         "tax_treatment": "Consumo de energia electrica activa afecto al IGV.",
+    },
+]
+
+# ─── SUNASS: Agua potable y saneamiento ──────────────────────────────────────
+WATER_REGULATED_RULES = [
+    {
+        "keywords": ("CARGO FIJO AGUA", "CARGO FIJO DE AGUA", "CARGO BASICO AGUA"),
+        "account_code": "636201",
+        "account_name": "Agua potable - Cargo fijo",
+        "taxable": True,
+        "tax_treatment": "Cargo fijo regulado del servicio de agua potable afecto al IGV.",
+    },
+    {
+        "keywords": (
+            "CONSUMO DE AGUA", "AGUA POTABLE", "VOLUMEN CONSUMIDO",
+            "M3", "METROS CUBICOS", "METROS CÚBICOS",
+        ),
+        "account_code": "636202",
+        "account_name": "Agua potable - Consumo",
+        "taxable": True,
+        "tax_treatment": "Consumo de agua potable afecto al IGV.",
+    },
+    {
+        "keywords": (
+            "ALCANTARILLADO", "DESAGUE", "DESAGÜE", "SERVICIO DE ALCANTARILLADO",
+            "TRATAMIENTO", "AGUAS RESIDUALES",
+        ),
+        "account_code": "636203",
+        "account_name": "Agua potable - Alcantarillado y saneamiento",
+        "taxable": True,
+        "tax_treatment": "Cargo de alcantarillado y saneamiento afecto al IGV.",
+    },
+    {
+        "keywords": ("SUNASS", "APORTE SUNASS", "REGULACION SUNASS"),
+        "account_code": "636204",
+        "account_name": "Agua potable - Aporte SUNASS",
+        "taxable": False,
+        "tax_treatment": "Cargo regulado SUNASS no afecto al IGV.",
+    },
+]
+
+# ─── OSINERGMIN: Gas natural ──────────────────────────────────────────────────
+GAS_REGULATED_RULES = [
+    {
+        "keywords": ("CARGO FIJO GAS", "CARGO FIJO DE GAS", "CARGO BASICO GAS"),
+        "account_code": "636301",
+        "account_name": "Gas natural - Cargo fijo",
+        "taxable": True,
+        "tax_treatment": "Cargo fijo regulado del servicio de gas natural afecto al IGV.",
+    },
+    {
+        "keywords": (
+            "CONSUMO DE GAS", "GAS NATURAL", "VOLUMEN GAS",
+            "M3 GAS", "THERMS", "ENERGIA GAS",
+        ),
+        "account_code": "636302",
+        "account_name": "Gas natural - Consumo",
+        "taxable": True,
+        "tax_treatment": "Consumo de gas natural afecto al IGV.",
+    },
+    {
+        "keywords": ("TRANSPORTE GAS", "CARGO TRANSPORTE", "DISTRIBUCION GAS"),
+        "account_code": "636303",
+        "account_name": "Gas natural - Transporte y distribucion",
+        "taxable": True,
+        "tax_treatment": "Cargo de transporte y distribucion de gas afecto al IGV.",
+    },
+]
+
+# ─── OSIPTEL: Telecomunicaciones ─────────────────────────────────────────────
+TELECOM_REGULATED_RULES = [
+    {
+        "keywords": (
+            "RENTA BASICA", "CARGO FIJO TELEFONO", "CARGO FIJO INTERNET",
+            "CARGO BASICO", "PLAN BASICO",
+        ),
+        "account_code": "636401",
+        "account_name": "Telecomunicaciones - Cargo fijo / renta basica",
+        "taxable": True,
+        "tax_treatment": "Cargo fijo de telecomunicaciones afecto al IGV.",
+    },
+    {
+        "keywords": (
+            "INTERNET", "BANDA ANCHA", "FIBRA OPTICA", "FIBRA ÓPTICA",
+            "SERVICIO INTERNET", "ACCESO INTERNET",
+        ),
+        "account_code": "636402",
+        "account_name": "Telecomunicaciones - Internet",
+        "taxable": True,
+        "tax_treatment": "Servicio de internet afecto al IGV.",
+    },
+    {
+        "keywords": (
+            "TELEFONIA", "TELEFONÍA", "LLAMADAS", "MINUTOS",
+            "TELEFONO FIJO", "TELÉFONO FIJO", "LINEA TELEFONICA",
+        ),
+        "account_code": "636403",
+        "account_name": "Telecomunicaciones - Telefonia",
+        "taxable": True,
+        "tax_treatment": "Servicio de telefonia afecto al IGV.",
+    },
+    {
+        "keywords": (
+            "CABLE", "TV CABLE", "TELEVISION", "TELEVISIÓN",
+            "SENAL TV", "SEÑAL TV", "STREAMING",
+        ),
+        "account_code": "636404",
+        "account_name": "Telecomunicaciones - Television por cable",
+        "taxable": True,
+        "tax_treatment": "Servicio de television por cable afecto al IGV.",
+    },
+    {
+        "keywords": ("OSIPTEL", "APORTE OSIPTEL", "FITEL"),
+        "account_code": "636405",
+        "account_name": "Telecomunicaciones - Aporte OSIPTEL/FITEL",
+        "taxable": False,
+        "tax_treatment": "Aporte regulado OSIPTEL/FITEL no afecto al IGV.",
     },
 ]
 
@@ -220,8 +345,23 @@ LEGAL_TAX_REVIEW_LIBRARY = [
 def _money(value: Any, default: str = "0.00") -> Decimal:
     try:
         raw = str(default if value is None or value == "" else value)
-        raw = raw.replace("S/", "").replace("s/", "").replace(",", ".").strip()
+        raw = raw.replace("S/", "").replace("s/", "").strip()
+        raw = re.sub(r"\s", "", raw)
+        # Detectar formato: si hay tanto punto como coma, el último es el separador decimal.
+        # Formato peruano/europeo "1.590,20" → 1590.20
+        # Formato anglosajón "1,590.20" → 1590.20
+        if "," in raw and "." in raw:
+            if raw.rfind(",") > raw.rfind("."):
+                raw = raw.replace(".", "").replace(",", ".")
+            else:
+                raw = raw.replace(",", "")
+        elif "," in raw:
+            raw = raw.replace(",", ".")
         raw = re.sub(r"[^0-9.\-]", "", raw)
+        # Si quedaron múltiples puntos, conservar solo el último como decimal
+        if raw.count(".") > 1:
+            parts = raw.split(".")
+            raw = "".join(parts[:-1]) + "." + parts[-1]
         if raw in {"", "-", ".", "-."}:
             raw = default
         return Decimal(raw).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
@@ -554,10 +694,27 @@ def _is_public_regulated_receipt(data: dict[str, Any], items: list[dict[str, Any
         + [_desc_upper(item) for item in items]
     )
     return any(token in text for token in [
-        "HIDRANDINA", "ELECTRONORTE", "ENEL", "LUZ DEL SUR", "ELECTRICIDAD", "ENERGIA", "ENERGÍA",
-        "SEDAPAL", "EPS", "SUNASS", "SANEAMIENTO", "AGUA POTABLE",
-        "OSINERGMIN", "MUNICIPALIDAD", "SAT", "GOBIERNO", "MINISTERIO", "ESSALUD", "SUNAT",
-        "FOSE", "FISE", "APORTE LEY", "ALUMBRADO PUBLICO", "ALUMBRADO PÚBLICO", "MRSE",
+        # OSINERGMIN - Electricidad
+        "HIDRANDINA", "ELECTRONORTE", "ELECTRONOROESTE", "ELECTROCENTRO", "ELECTROSUR",
+        "ENEL", "LUZ DEL SUR", "SEAL", "ENOSA", "ENSA", "ENELPERU",
+        "ELECTRICIDAD", "ENERGIA ELECTRICA", "ENERGÍA ELÉCTRICA",
+        "ENERGIA ACTIVA", "ENERGÍA ACTIVA", "ALUMBRADO PUBLICO", "ALUMBRADO PÚBLICO",
+        "CARGO FIJO", "FOSE", "FISE", "APORTE LEY", "LEY 28749", "MRSE",
+        "OSINERGMIN",
+        # OSINERGMIN - Gas natural
+        "CALIDDA", "QUAVII", "GAS NATURAL", "GAS DE LIMA", "CONTUGAS",
+        "GASES DEL PACIFICO",
+        # SUNASS - Agua y saneamiento
+        "SEDAPAL", "SEDALIB", "EPS GRAU", "EPS ILO", "EPS TACNA", "SEDACAJ",
+        "SEDACHIMBOTE", "EMAPICA", "EMAPISCO", "EMAPAT", "EMAPAVIGS",
+        "EPS SELVA CENTRAL", "SUNASS", "AGUA POTABLE", "ALCANTARILLADO",
+        "SANEAMIENTO", "SERVICIO DE AGUA",
+        # OSIPTEL - Telecomunicaciones
+        "MOVISTAR", "TELEFONICA", "TELEFONÍA", "CLARO", "ENTEL", "BITEL",
+        "VIRGIN MOBILE", "WOM", "OSIPTEL", "FITEL",
+        "INTERNET", "FIBRA OPTICA", "FIBRA ÓPTICA", "BANDA ANCHA",
+        # Genérico gobierno/regulado
+        "MUNICIPALIDAD", "SAT", "GOBIERNO", "MINISTERIO", "ESSALUD",
     ])
 
 
@@ -590,15 +747,17 @@ def _clean_public_receipt_items_and_amounts(
         cleaned.append(item)
     items = cleaned
 
+    # Tokens gravados que forman la base imponible del servicio regulado
     base_tokens = (
-        "CARGO FIJO",
-        "REPOSICION",
-        "REPOSICIÓN",
-        "MANTENIMIENTO",
-        "ENERGIA ACTIVA",
-        "ENERGÍA ACTIVA",
-        "ALUMBRADO PUBLICO",
-        "ALUMBRADO PÚBLICO",
+        # Electricidad (OSINERGMIN)
+        "CARGO FIJO", "REPOSICION", "REPOSICIÓN", "MANTENIMIENTO",
+        "ENERGIA ACTIVA", "ENERGÍA ACTIVA", "ALUMBRADO PUBLICO", "ALUMBRADO PÚBLICO",
+        # Agua (SUNASS)
+        "CONSUMO DE AGUA", "AGUA POTABLE", "ALCANTARILLADO",
+        # Gas (OSINERGMIN)
+        "GAS NATURAL", "CONSUMO DE GAS",
+        # Telecomunicaciones (OSIPTEL)
+        "RENTA BASICA", "INTERNET", "TELEFONIA", "TELEFONÍA", "CABLE",
     )
     base_sum = sum(
         (_item_amount_value(item) for item in items if any(token in _desc_upper(item) for token in base_tokens)),
@@ -619,10 +778,18 @@ def _clean_public_receipt_items_and_amounts(
             igv = expected_igv
             data["igv"] = _money_str(igv)
 
+    # Aplicar reglas de todos los organismos reguladores
+    all_regulated_rules = (
+        ELECTRIC_REGULATED_RULES      # OSINERGMIN - Electricidad
+        + WATER_REGULATED_RULES       # SUNASS - Agua y saneamiento
+        + GAS_REGULATED_RULES         # OSINERGMIN - Gas natural
+        + TELECOM_REGULATED_RULES     # OSIPTEL - Telecomunicaciones
+    )
+
     for item in items:
         desc_up = _desc_upper(item)
         matched_rule: dict[str, Any] | None = None
-        for rule in ELECTRIC_REGULATED_RULES:
+        for rule in all_regulated_rules:
             if any(token in desc_up for token in rule["keywords"]):
                 matched_rule = rule
                 break
@@ -639,8 +806,8 @@ def _clean_public_receipt_items_and_amounts(
         item["requires_detraccion_review"] = False
         item["deductibility"] = "DEDUCIBLE"
         item["igv_credit"] = "SI" if matched_rule["taxable"] else "NO"
-        item["tax_treatment"] = matched_rule.get("tax_treatment") or "Cargo regulado de electricidad; subcuenta especifica."
-        item["ai_reason"] = f"Reclasificado por reglas reguladas electricas: {matched_rule['account_name']}."
+        item["tax_treatment"] = matched_rule.get("tax_treatment") or "Cargo regulado; subcuenta especifica segun organismo regulador."
+        item["ai_reason"] = f"Reclasificado por reglas reguladas ({matched_rule['account_name']})."
         item["ai_confidence"] = 0.98
 
     saldo = sum((_item_amount_value(item) for item in items if _is_saldo_redondeo(item)), Decimal("0.00")).quantize(Decimal("0.01"))
@@ -1007,53 +1174,66 @@ async def process_purchase_with_gemini(
     file: UploadFile = File(...),
     ctx=Depends(get_current_context),
 ):
-    if not settings.gemini_api_key:
-        raise HTTPException(status_code=500, detail="GEMINI_API_KEY no configurado")
+    if not is_vision_available():
+        raise HTTPException(status_code=500, detail="Configura CLAUDE_API_KEY o GEMINI_API_KEY para activar lectura IA de comprobantes.")
 
     raw = await file.read()
     if not raw:
         raise HTTPException(status_code=400, detail="Archivo vacio")
 
     mime_type = file.content_type or mimetypes.guess_type(file.filename or "")[0] or "application/octet-stream"
-    encoded = base64.b64encode(raw).decode("utf-8")
-
-    try:
-        import google.generativeai as genai
-    except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail="Falta instalar google-generativeai. Ejecuta: pip install google-generativeai",
-        ) from exc
 
     prompt = f"""
-Eres CONTA_PRO Vision Accounting Engine.
-REGLA MADRE CONTA_PRO PARA COMPRAS:
-- FASE 1: lectura visual pura del comprobante. Transcribe importes tal como figuran; no inventes ni recalcules.
-- FASE 2: validacion matematica contra total impreso.
-- FASE 3: clasificacion contable/tributaria por concepto.
-- FASE 4: asiento contable.
+Eres CONTA_PRO Vision Accounting Engine para Peru. Lee el comprobante PIXEL POR PIXEL.
 
+REGLA SUPREMA: El TOTAL A PAGAR impreso en el comprobante manda siempre. No calcules, no redondees, no inventes importes.
 
-REGLA CRITICA DE DESGLOSE VISUAL:
-- En recibos de servicios publicos NO agrupes conceptos.
-- Cada fila visible del comprobante debe salir como item independiente.
-- Esta prohibido devolver "Servicios basicos (Cargo Fijo, Reposicion...)" como una sola linea.
-- Debe separar:
-  * Cargo fijo
-  * Cargo por reposicion y mantenimiento
-  * Energia activa
-  * Alumbrado publico
-  * Aporte Ley 28749
-  * Saldo por redondeo
-  * Diferencia de redondeo
-  * FOSE/FISE si aparece
-- El IGV no es item; va solo como impuesto.
-- Si no puedes leer el importe exacto de una fila visible, no inventes: marca requires_visual_review=true.
+DECIMALES PERUANOS: Los importes pueden usar punto (.) o coma (,) como separador decimal.
+- "190,10" = 190.10 soles
+- "1.590,20" = 1590.20 soles
+- "50.19" = 50.19 soles
+Devuelve SIEMPRE los importes como string con punto decimal: "190.10", "1590.20", "50.19".
 
-RECIBOS PUBLICOS / SERVICIOS REGULADOS:
-- En electricidad, agua, saneamiento, telecom, municipalidad o gobierno, los importes impresos mandan.
-- Prioridad: subcuenta correcta, centro de costo correcto en gastos clase 6/9 y total igual al recibo.
-- Si existe SUB TOTAL impreso, ese SUB TOTAL manda como base gravada del bloque.
+ORGANISMOS REGULADORES PERUANOS - DESGLOSE OBLIGATORIO por fila visible:
+
+OSINERGMIN - Electricidad (HIDRANDINA, ELECTRONORTE, ENEL, LUZ DEL SUR, SEAL, ELECTROCENTRO):
+  * Energia activa / Consumo activo → cuenta 636101
+  * Cargo fijo → cuenta 636102
+  * Alumbrado publico → cuenta 636103
+  * Reposicion y mantenimiento → cuenta 636104
+  * Aporte Ley 28749 → cuenta 636105 (NO afecto IGV)
+  * FOSE/FISE → cuenta 636106 (NO afecto IGV)
+
+SUNASS - Agua y saneamiento (SEDAPAL, SEDALIB, EPS GRAU, EPS ILO, SEDACAJ):
+  * Cargo fijo agua → cuenta 636201
+  * Consumo agua potable (m3) → cuenta 636202
+  * Alcantarillado / desague → cuenta 636203
+  * Aporte SUNASS → cuenta 636204 (NO afecto IGV)
+
+OSINERGMIN - Gas natural (CALIDDA, QUAVII, CONTUGAS):
+  * Cargo fijo gas → cuenta 636301
+  * Consumo gas natural → cuenta 636302
+  * Transporte/distribucion gas → cuenta 636303
+
+OSIPTEL - Telecomunicaciones (MOVISTAR, CLARO, ENTEL, BITEL):
+  * Renta basica / cargo fijo → cuenta 636401
+  * Internet / banda ancha → cuenta 636402
+  * Telefonia → cuenta 636403
+  * TV cable → cuenta 636404
+  * Aporte OSIPTEL/FITEL → cuenta 636405 (NO afecto IGV)
+
+SALDO ANTERIOR / DEUDA ANTERIOR (EN CUALQUIER RECIBO DE SERVICIO PUBLICO):
+  * Si aparece "Saldo anterior", "Deuda anterior", "Recibo anterior" → es deuda de periodo anterior
+  * Cuenta: 421201 (Cuentas por pagar - deuda anterior)
+  * NO genera nuevo IGV, NO es gasto nuevo
+  * line_type: "PRIOR_BALANCE"
+
+REGLAS PARA TODOS LOS RECIBOS REGULADOS:
+- Cada fila del recibo = un item separado en el JSON. PROHIBIDO agrupar.
+- El IGV no va en items; solo como campo "igv" del JSON.
+- Si no lees el importe exacto, pon el importe mas cercano visible y marca requires_visual_review=true.
+- FOSE/FISE y Aporte Ley aparecen DESPUES del total; si el total ya cuadra sin ellos, son informativos.
+- Diferencia de redondeo / Saldo por redondeo → absorbe el cuadre contra el total.
 - Si existe IGV impreso o se deduce del SUB TOTAL visible, usar ese IGV; no convertir diferencias de IGV en redondeo falso.
 - Si el recibo trae Saldo por redondeo o Diferencia de redondeo, NO crear una tercera linea de ajuste.
 - La linea visible Diferencia de redondeo absorbe el cuadre contra el total impreso.
@@ -1068,23 +1248,13 @@ Usa criterio contable, tributario, legal-documentario y auditoria.
 """
 
     try:
-        genai.configure(api_key=settings.gemini_api_key)
-        model = genai.GenerativeModel(settings.gemini_model or "gemini-1.5-pro")
-        result = model.generate_content(
-            [
-                prompt,
-                {
-                    "mime_type": mime_type,
-                    "data": encoded,
-                },
-            ],
-            generation_config={
-                "temperature": 0.02,
-                "response_mime_type": "application/json",
-            },
+        client = get_vision_client()
+        response = await client.analyze_document(
+            instruction=prompt,
+            file_bytes=raw,
+            mime_type=mime_type,
         )
-
-        text = result.text or "{}"
+        text = client.response_text(response) or "{}"
         data = json.loads(text)
 
         if not isinstance(data, dict):

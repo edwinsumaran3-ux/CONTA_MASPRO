@@ -23,7 +23,9 @@ class GeminiClient:
         payload = {"contents": [{"parts": [{"text": json.dumps(prompt, ensure_ascii=False)}]}]}
         async with httpx.AsyncClient(timeout=45) as client:
             response = await client.post(url, params={"key": self.api_key}, json=payload)
-            response.raise_for_status()
+            if not response.is_success:
+                detail = response.text[:400]
+                raise RuntimeError(f"Gemini API error {response.status_code}: {detail}")
             return response.json()
 
     async def analyze_document(
@@ -65,7 +67,9 @@ class GeminiClient:
         }
         async with httpx.AsyncClient(timeout=timeout_seconds) as client:
             response = await client.post(url, params={"key": self.api_key}, json=payload)
-            response.raise_for_status()
+            if not response.is_success:
+                detail = response.text[:400]
+                raise RuntimeError(f"Gemini API error {response.status_code}: {detail}")
             return response.json()
 
     @staticmethod

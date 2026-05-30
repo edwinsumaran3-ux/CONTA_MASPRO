@@ -11,6 +11,7 @@ from sqlalchemy import select
 
 from src.api.dependencies import require_roles
 from src.api.routes.ledger import build_hash_service, build_uow_factory
+from src.infrastructure.adapters.ai.vision_provider import get_vision_client, is_vision_available
 from src.application.services.hr_ai_service import (
     CV_EXTRACTION_PROMPT,
     LABOR_LEGAL_LIBRARY,
@@ -207,21 +208,81 @@ async def extract_cv(
     ctx=Depends(require_roles("ADMIN", "ACCOUNTANT", "CONTROLLER")),
 ):
     raw = await file.read()
+    mime_type = file.content_type or "application/octet-stream"
+    filename = file.filename or "cv"
+    warnings: list[str] = []
+
+    # Intentar extracción con Claude o Gemini si hay API key configurada
+    if is_vision_available() and mime_type in {
+        "application/pdf", "image/png", "image/jpeg", "image/jpg", "image/webp"
+    }:
+        try:
+            client = get_vision_client()
+            response = await client.analyze_document(
+                instruction=CV_EXTRACTION_PROMPT,
+                file_bytes=raw,
+                mime_type=mime_type,
+            )
+            import json as _json
+            text_raw = client.response_text(response)
+            # Intentar parsear si Gemini devuelve JSON directo
+            try:
+                gemini_data = _json.loads(text_raw)
+                if isinstance(gemini_data, dict):
+                    worker = {
+                        "nombres": gemini_data.get("Nombres") or gemini_data.get("nombres") or "",
+                        "apellidos": gemini_data.get("Apellidos") or gemini_data.get("apellidos") or "",
+                        "dni": gemini_data.get("DNI") or gemini_data.get("dni") or "",
+                        "fecha_nacimiento": gemini_data.get("Fecha de nacimiento") or gemini_data.get("fecha_nacimiento"),
+                        "direccion_domicilio": gemini_data.get("Direccion") or gemini_data.get("direccion_domicilio") or "",
+                        "telefono": gemini_data.get("Telefono") or gemini_data.get("telefono") or "",
+                        "email": gemini_data.get("Correo") or gemini_data.get("email") or "",
+                        "profesion": gemini_data.get("Profesion") or gemini_data.get("profesion") or "",
+                        "experiencia": gemini_data.get("Experiencia") or gemini_data.get("experiencia") or "",
+                        "estudios_realizados": gemini_data.get("Estudios") or gemini_data.get("estudios_realizados") or "",
+                        "cargo_postulado": gemini_data.get("cargo_postulado") or gemini_data.get("Profesion") or "Por definir",
+                        "sueldo_pactado": str(gemini_data.get("sueldo_pactado") or "0.00"),
+                        "pension_system": gemini_data.get("Sistema pensionario") or gemini_data.get("pension_system") or "AFP",
+                        "cuenta_bancaria": gemini_data.get("cuenta bancaria") or gemini_data.get("cuenta_bancaria") or "",
+                        "cci": gemini_data.get("CCI") or gemini_data.get("cci") or "",
+                        "habilidades_clave": gemini_data.get("habilidades_clave") or [],
+                        "requirements": gemini_data.get("requirements") or [],
+                        "alerts": gemini_data.get("alerts") or [],
+                    }
+                    return {
+                        "tenant_id": ctx["tenant_id"],
+                        "filename": filename,
+                        "text_preview": text_raw[:600],
+                        "warnings": warnings,
+                        "worker": worker,
+                        "workers_batch": [{"candidate_index": 1, "worker": worker}],
+                        "batch_count": 1,
+                        "provider": "gemini",
+                    }
+            except _json.JSONDecodeError:
+                # Gemini devolvió texto libre — pasar como texto para el parser local
+                raw = text_raw.encode("utf-8")
+                mime_type = "text/plain"
+        except Exception as exc:
+            warnings.append(f"Gemini no disponible, usando OCR local: {exc}")
+
+    # Fallback: extracción local con pytesseract/regex
     service = CvExtractionService()
-    text, warnings = service.extract_text(file.filename or "cv", file.content_type, raw)
+    text, local_warnings = service.extract_text(filename, mime_type, raw)
+    warnings.extend(local_warnings)
     workers_batch = service.parse_cv_batch(text, reniec_address=reniec_address)
     primary = workers_batch[0]["worker"] if workers_batch else service.parse_cv(text, reniec_address=reniec_address).as_dict()
     if len(workers_batch) > 1:
         warnings.append(f"Se detectaron {len(workers_batch)} candidatos en un solo archivo.")
     return {
         "tenant_id": ctx["tenant_id"],
-        "prompt": CV_EXTRACTION_PROMPT,
-        "filename": file.filename,
+        "filename": filename,
         "text_preview": text[:900],
         "warnings": warnings,
         "worker": primary,
         "workers_batch": workers_batch,
         "batch_count": len(workers_batch),
+        "provider": "local_ocr",
     }
 
 

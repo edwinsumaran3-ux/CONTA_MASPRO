@@ -16,8 +16,19 @@ export type AccountingMovement = {
   risk: 'BAJO' | 'MEDIO' | 'ALTO';
 };
 
+export type ChartAccountItem = {
+  code: string;
+  name: string;
+  account_class: string;
+  statement: string;
+  nature: string;
+  accepts_cost_center: boolean;
+  accepts_partner: boolean;
+};
+
 type AccountingLivePanelProps = {
   movements?: AccountingMovement[];
+  chartAccounts?: ChartAccountItem[];
   loading?: boolean;
   selectedMovementId?: string;
   statusMessage?: string;
@@ -28,20 +39,6 @@ type AccountingLivePanelProps = {
   onSelectMovement?: (movement: AccountingMovement) => void;
 };
 
-const plan = [
-  { code: '10', name: 'Efectivo y equivalentes', type: 'Activo', prefixes: ['10'] },
-  { code: '12', name: 'Cuentas por cobrar comerciales', type: 'Activo', prefixes: ['12'] },
-  { code: '40', name: 'Tributos, contraprestaciones y aportes', type: 'Tributario', prefixes: ['40'] },
-  { code: '41', name: 'Remuneraciones por pagar', type: 'Pasivo', prefixes: ['41'], modules: ['PAYROLL', 'PLANILLAS'] },
-  { code: '42', name: 'Cuentas por pagar comerciales', type: 'Pasivo', prefixes: ['42'] },
-  { code: '60', name: 'Compras registradas', type: 'Modulo compras', prefixes: ['60'], modules: ['PURCHASING', 'COMPRAS'] },
-  { code: '62', name: 'Gastos de personal', type: 'Planillas', prefixes: ['62'], modules: ['PAYROLL', 'PLANILLAS'] },
-  { code: '63', name: 'Servicios prestados por terceros', type: 'Gasto', prefixes: ['63'] },
-  { code: '67', name: 'Gastos financieros', type: 'Gasto', prefixes: ['67'] },
-  { code: '68', name: 'Valorizacion y deterioro', type: 'Gasto', prefixes: ['68'] },
-  { code: '70', name: 'Ventas', type: 'Ingreso', prefixes: ['70'], modules: ['BILLING', 'VENTAS', 'SALES_IA'] },
-];
-
 const money = (value: number) =>
   `S/ ${value.toLocaleString('es-PE', {
     minimumFractionDigits: 2,
@@ -50,6 +47,7 @@ const money = (value: number) =>
 
 export default function AccountingLivePanel({
   movements = [],
+  chartAccounts = [],
   loading = false,
   selectedMovementId,
   statusMessage = '',
@@ -63,33 +61,63 @@ export default function AccountingLivePanel({
   const [selectedId, setSelectedId] = useState<string | null>(selectedMovementId ?? null);
   const [search, setSearch] = useState('');
 
+  // Plan contable dinámico: prioriza cuentas del backend, complementa con cuentas de movimientos
+  const plan = useMemo(() => {
+    const grouped = new Map<string, { code: string; name: string; type: string }>();
+
+    // Primero agrega las cuentas del backend (plan contable real)
+    for (const acc of chartAccounts) {
+      const prefix = acc.code.slice(0, 2);
+      if (!grouped.has(prefix)) {
+        const typeLabel =
+          acc.statement === 'PROFIT_LOSS'
+            ? 'Resultados'
+            : acc.statement === 'BALANCE'
+            ? 'Balance'
+            : acc.statement || 'Otros';
+        grouped.set(prefix, { code: prefix, name: acc.name, type: typeLabel });
+      }
+    }
+
+    // Complementa con cuentas que aparecen en movimientos pero no en el plan
+    for (const m of movements) {
+      if (!m.account) continue;
+      const prefix = (m.account || '').slice(0, 2);
+      if (prefix && !grouped.has(prefix)) {
+        grouped.set(prefix, {
+          code: prefix,
+          name: m.accountName || `Cuenta ${prefix}`,
+          type: 'Otros',
+        });
+      }
+    }
+
+    return Array.from(grouped.values()).sort((a, b) => a.code.localeCompare(b.code));
+  }, [chartAccounts, movements]);
+
+  // Totales por cuenta (prefijo 2 dígitos)
   const accountTotals = useMemo(() => {
     const result = new Map<string, { count: number; debit: number; credit: number }>();
-    for (const account of plan) {
-      result.set(account.code, { count: 0, debit: 0, credit: 0 });
+    for (const acc of plan) {
+      result.set(acc.code, { count: 0, debit: 0, credit: 0 });
     }
     for (const movement of movements) {
-      for (const parent of plan) {
-        const byPrefix = parent.prefixes.some((prefix) => movement.account.startsWith(prefix));
-        const byModule = parent.modules?.some((module) => movement.module.toUpperCase() === module);
-        if (!byPrefix && !byModule) continue;
-        const total = result.get(parent.code) ?? { count: 0, debit: 0, credit: 0 };
+      const prefix = (movement.account || '').slice(0, 2);
+      if (result.has(prefix)) {
+        const total = result.get(prefix)!;
         total.count += 1;
         total.debit += movement.debit;
         total.credit += movement.credit;
-        result.set(parent.code, total);
       }
     }
     return result;
-  }, [movements]);
+  }, [movements, plan]);
 
+  // Filtrado: por cuenta seleccionada (startsWith) y búsqueda de texto
   const filtered = useMemo(() => {
     return movements.filter((m) => {
-      const account = plan.find((item) => item.code === selectedAccount);
-      const byAccount = account
-        ? account.prefixes.some((prefix) => m.account.startsWith(prefix))
-          || account.modules?.some((module) => m.module.toUpperCase() === module)
-        : true;
+      const byAccount =
+        selectedAccount === '' ? true : (m.account || '').startsWith(selectedAccount);
       const bySearch = `${m.glosa} ${m.account} ${m.accountName} ${m.module} ${m.hash}`
         .toLowerCase()
         .includes(search.toLowerCase());
@@ -122,7 +150,7 @@ export default function AccountingLivePanel({
       <div className="sap-card-head">
         <div>
           <h3>Plan Contable Vivo | Libro Diario y Mayor Analítico</h3>
-          <p>{statusMessage || 'Datos reales del Libro Diario conectados al Mayor Analítico.'}</p>
+          <p>{statusMessage || 'Plan contable actualizado desde el sistema.'}</p>
         </div>
 
         <div className="sap-actions">
@@ -140,6 +168,7 @@ export default function AccountingLivePanel({
 
       <div className="sap-live-grid" style={{ flex: 1, minHeight: 0 }}>
         <aside className="sap-plan-list">
+          {/* Opción: Todas las cuentas */}
           <button
             type="button"
             className={`sap-account ${selectedAccount === '' ? 'active' : ''}`}
@@ -151,25 +180,34 @@ export default function AccountingLivePanel({
               <small>{movements.length} movimientos</small>
             </div>
           </button>
-          {plan.map((account) => (
-            (() => {
-              const total = accountTotals.get(account.code) ?? { count: 0, debit: 0, credit: 0 };
-              return (
-            <button
-              key={account.code}
-              type="button"
-              className={`sap-account ${selectedAccount === account.code ? 'active' : ''}`}
-              onClick={() => setSelectedAccount(account.code)}
-            >
-              <span>{account.code}</span>
-              <div>
-                <strong>{account.name}</strong>
-                <small>{account.type} · {total.count} mov. · {money(total.debit - total.credit)}</small>
-              </div>
-            </button>
-              );
-            })()
-          ))}
+
+          {/* Plan contable dinámico */}
+          {plan.length === 0 && !loading && (
+            <div style={{ padding: '12px 8px', color: '#64748b', fontSize: 12 }}>
+              Sin cuentas registradas aún. Registre compras, ventas o asientos.
+            </div>
+          )}
+          {plan.map((account) => {
+            const total = accountTotals.get(account.code) ?? { count: 0, debit: 0, credit: 0 };
+            const saldo = total.debit - total.credit;
+            return (
+              <button
+                key={account.code}
+                type="button"
+                className={`sap-account ${selectedAccount === account.code ? 'active' : ''}`}
+                onClick={() => setSelectedAccount(account.code)}
+              >
+                <span>{account.code}</span>
+                <div>
+                  <strong>{account.name}</strong>
+                  <small>
+                    {account.type} · {total.count} mov.
+                    {total.count > 0 && ` · ${money(Math.abs(saldo))}`}
+                  </small>
+                </div>
+              </button>
+            );
+          })}
         </aside>
 
         <div className="sap-ledger-wrap">
@@ -193,13 +231,15 @@ export default function AccountingLivePanel({
               {loading && movements.length === 0 ? (
                 <tr>
                   <td colSpan={10} style={{ textAlign: 'center', padding: 24 }}>
-                    Cargando Libro Diario desde la API...
+                    Cargando datos desde la API...
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
                   <td colSpan={10} style={{ textAlign: 'center', padding: 24 }}>
-                    Sin movimientos reales para la cuenta o búsqueda seleccionada.
+                    {movements.length === 0
+                      ? 'Sin movimientos. Registre compras, ventas o asientos para ver datos.'
+                      : 'Sin movimientos para la cuenta o búsqueda seleccionada.'}
                   </td>
                 </tr>
               ) : (
@@ -238,7 +278,7 @@ export default function AccountingLivePanel({
                 <td colSpan={5}>Totales visibles</td>
                 <td className="money">{money(debe)}</td>
                 <td className="money">{money(haber)}</td>
-                <td colSpan={3}>{Math.abs(debe - haber) < 0.01 ? 'Cuadrado' : 'Diferencia por cuenta seleccionada'}</td>
+                <td colSpan={3}>{Math.abs(debe - haber) < 0.01 ? 'Cuadrado ✓' : `Diferencia: ${money(Math.abs(debe - haber))}`}</td>
               </tr>
             </tfoot>
           </table>
@@ -251,33 +291,24 @@ export default function AccountingLivePanel({
             <>
               <p><b>Asiento:</b> {selected.id}</p>
               <p><b>Cuenta:</b> {selected.account} - {selected.accountName}</p>
-              <p><b>Centro costo:</b> {selected.costCenter}</p>
+              <p><b>Centro costo:</b> {selected.costCenter || '—'}</p>
               <p><b>Módulo:</b> {selected.module}</p>
               <p><b>Estado:</b> {selected.status}</p>
-              <p><b>Hash:</b> {selected.hash}</p>
+              <p><b>Hash:</b> <span style={{ fontFamily: 'monospace', fontSize: 10 }}>{selected.hash}</span></p>
 
-              <div className="sap-chart">
-                <div style={{ height: 42 }} />
-                <div style={{ height: 74 }} />
-                <div style={{ height: 28 }} />
-                <div style={{ height: 92 }} />
-                <div style={{ height: 55 }} />
-              </div>
-
-              <h4>Recomendación IA</h4>
+              <h4 style={{ marginTop: 12 }}>Recomendación IA</h4>
               <ul>
                 <li>{selected.risk === 'ALTO' ? 'Priorizar revisión del asiento y su cuadre.' : 'Movimiento sin alerta crítica visible.'}</li>
-                <li>Validar centro de costo asignado cuando aplique clase 6 o 9.</li>
+                <li>Validar centro de costo en cuentas clase 6/9.</li>
                 <li>Verificar respaldo XML/PDF y trazabilidad del hash.</li>
                 <li>{aiMessage || 'Ejecuta Auditoría IA para ampliar recomendaciones.'}</li>
               </ul>
             </>
           ) : (
-            <p>Selecciona una cuenta con movimientos reales del Libro Diario.</p>
+            <p style={{ color: '#94a3b8' }}>Selecciona una cuenta con movimientos para ver el detalle analítico.</p>
           )}
         </aside>
       </div>
     </section>
   );
 }
-

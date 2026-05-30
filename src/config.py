@@ -12,7 +12,9 @@ class Settings(BaseSettings):
     refresh_token_days: int = 30
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,http://localhost:3000,http://127.0.0.1:3000"
     gemini_api_key: str | None = None
-    gemini_model: str = "gemini-1.5-pro"
+    gemini_model: str = "gemini-2.0-flash"
+    claude_api_key: str | None = None
+    claude_model: str = "claude-haiku-4-5-20251001"
     expert_accounting_enabled: bool = True
     document_ai_provider: str = "layoutlmv3"
     rag_vector_provider: str = "pgvector"
