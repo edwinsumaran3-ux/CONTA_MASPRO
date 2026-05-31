@@ -915,6 +915,15 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
           tax_treatment: item.taxTreatment,
           ai_reason: item.aiReason,
           ai_confidence: item.aiConfidence,
+          line_type: (item as any).lineType || 'EXPENSE_OR_ASSET',
+          is_inventory: (item as any).isInventory || false,
+          item_class: (item as any).itemClass || null,
+          catalog_code: (item as any).catalogCode || null,
+          catalog_nat: (item as any).catalogNat || null,
+          catalog_rub: (item as any).catalogRub || null,
+          catalog_tk: (item as any).catalogTk || null,
+          catalog_match: (item as any).catalogMatch || false,
+          gasto_account: (item as any).gastoAccount || null,
         })),
 
         line_items: items.map((item) => ({
@@ -928,6 +937,14 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
           account_name: item.accountName,
           cost_center: item.costCenter,
           tax_treatment: item.taxTreatment,
+          line_type: (item as any).lineType || 'EXPENSE_OR_ASSET',
+          is_inventory: (item as any).isInventory || false,
+          item_class: (item as any).itemClass || null,
+          catalog_code: (item as any).catalogCode || null,
+          catalog_nat: (item as any).catalogNat || null,
+          catalog_rub: (item as any).catalogRub || null,
+          catalog_tk: (item as any).catalogTk || null,
+          catalog_match: (item as any).catalogMatch || false,
         })),
 
         account_lines: accountLines.map((line) => ({

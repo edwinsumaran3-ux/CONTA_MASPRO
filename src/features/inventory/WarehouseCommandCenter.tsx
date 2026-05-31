@@ -96,6 +96,12 @@ interface PendingPurchase {
   source_doc?: string;
   source_module?: string;
   ai_reason?: string;
+  catalog_code?: string;
+  catalog_nat?: string;
+  catalog_rub?: string;
+  catalog_tk?: string;
+  catalog_match?: boolean;
+  gasto_account?: string;
   checked: boolean;
 }
 
@@ -117,6 +123,11 @@ interface ToolAssignment {
   condition_out: string;    // 'BUENO' | 'REGULAR' | 'MALO'
   condition_in?: string;
   notes?: string;
+  // Token temporal de asignación — único por asignación activa
+  asg_token: string;        // ASG-{tool_code}-{worker_doc}-{YYYYMMDD}
+  hours_assigned?: number;  // Horas totales de uso (calculado al devolver)
+  started_at?: string;      // ISO timestamp de entrega
+  returned_at?: string;     // ISO timestamp de devolución
 }
 
 interface DispatchItem {
@@ -228,6 +239,22 @@ const AREAS: Area[] = ['ALMACEN', 'PRODUCCION', 'OBRA', 'ADMINISTRACION', 'MANTE
 // ============================================================
 // DATOS DEMO (construcción / industria)
 // ============================================================
+// Motivos de salida — constante a nivel módulo (no dentro del componente)
+const EXIT_REASONS = [
+  { code: 'CONSUMO',          label: 'Consumo / Uso operativo',            icon: '🔄', color: '#58a6ff' },
+  { code: 'PRODUCCION',       label: 'Uso en producción',                  icon: '🏭', color: '#3fb950' },
+  { code: 'VENTA',            label: 'Salida por venta',                   icon: '💰', color: '#a371f7' },
+  { code: 'BAJA_DESGASTE',    label: 'Baja por desgaste',                  icon: '🔨', color: '#d29922' },
+  { code: 'BAJA_ANTIGUEDAD',  label: 'Baja por antigüedad/obsolescencia',  icon: '🗓', color: '#d29922' },
+  { code: 'BAJA_VENCIMIENTO', label: 'Baja por vencimiento/caducidad',     icon: '⏰', color: '#d29922' },
+  { code: 'BAJA_PERDIDA',     label: 'Baja por pérdida/extravío',          icon: '🔍', color: '#f85149' },
+  { code: 'BAJA_ROBO',        label: 'Baja por robo/sustracción',          icon: '🚨', color: '#f85149' },
+  { code: 'BAJA_SINIESTRO',   label: 'Baja por siniestro/desastre',        icon: '⚡', color: '#f85149' },
+  { code: 'DEVOLUCION',       label: 'Devolución a proveedor',             icon: '↩', color: '#58a6ff'  },
+  { code: 'AJUSTE',           label: 'Ajuste de inventario',               icon: '⚖', color: '#8b949e'  },
+  { code: 'OTRO',             label: 'Otro motivo',                        icon: '📝', color: '#8b949e'  },
+] as const;
+
 // Tablas vacías — el usuario ingresa sus propios datos
 const DEMO_ITEMS: WarehouseItem[] = [];
 const DEMO_MOVEMENTS: Movement[] = [];
@@ -622,6 +649,18 @@ export default function WarehouseCommandCenter({ apiBase = '/api/v1', token = ''
   const [dispatchRef, setDispatchRef] = useState({ reference: '', destination: '', notes: '' });
   const tableRef = useRef<HTMLDivElement>(null);
 
+  // ── Estados para vista Salidas/Bajas (hoisted — Rules of Hooks) ──────────
+  const [exitForm, setExitForm] = useState({
+    product_id: '', qty: '1', exit_reason: 'CONSUMO', notes: '', doc_ref: '',
+  });
+  const [exitLoading, setExitLoading] = useState(false);
+  const [exitMsg, setExitMsg]     = useState('');
+
+  // ── Estados para reporte Por Cuenta PCGE ─────────────────────────────────
+  const [acctData, setAcctData]       = useState<any>(null);
+  const [acctLoading, setAcctLoading] = useState(false);
+  const [acctExpanded, setAcctExpanded] = useState<Set<string>>(new Set());
+
   const say = (msg: string) => onStatus?.(msg);
 
   // ── fetch data ──────────────────────────────────────────────
@@ -636,9 +675,10 @@ export default function WarehouseCommandCenter({ apiBase = '/api/v1', token = ''
         fetch(`${apiBase}/inventory/warehouses`, { headers: hdrs }),
         fetch(`${apiBase}/inventory/pending-purchases?limit=100`, { headers: hdrs }),
       ]);
-      if (balRes.ok)     { const d = await balRes.json();     if (Array.isArray(d) && d.length) setItems(d); }
-      if (movRes.ok)     { const d = await movRes.json();     if (Array.isArray(d) && d.length) setMovements(d); }
-      if (whRes.ok)      { const d = await whRes.json();      if (Array.isArray(d) && d.length) setWarehouses(d); }
+      // Siempre reemplazar con datos reales del backend (limpia estado local sucio)
+      if (balRes.ok)  { const d = await balRes.json();  if (Array.isArray(d)) setItems(d); }
+      if (movRes.ok)  { const d = await movRes.json();  if (Array.isArray(d)) setMovements(d); }
+      if (whRes.ok)   { const d = await whRes.json();   if (Array.isArray(d) && d.length) setWarehouses(d); }
       if (pendingRes.ok) {
         const d = await pendingRes.json();
         if (Array.isArray(d) && d.length) {
@@ -666,9 +706,15 @@ export default function WarehouseCommandCenter({ apiBase = '/api/v1', token = ''
             cost_center:   p.cost_center || 'LOG-ALM',
             entry_id:      p.entry_id || '',
             source_doc:    p.source_doc || '',
-            source_module: p.source_module || 'PURCHASING',
-            ai_reason:     p.ai_reason || '',
-            checked:       false,
+            source_module:  p.source_module  || 'PURCHASING',
+            ai_reason:      p.ai_reason      || '',
+            catalog_code:   p.catalog_code   || '',
+            catalog_nat:    p.catalog_nat    || '',
+            catalog_rub:    p.catalog_rub    || 'GE',
+            catalog_tk:     p.catalog_tk     || 'F',
+            catalog_match:  !!p.catalog_match,
+            gasto_account:  p.gasto_account  || '',
+            checked:        false,
           }));
           setPendingPurchases(mapped);
         }
@@ -682,6 +728,19 @@ export default function WarehouseCommandCenter({ apiBase = '/api/v1', token = ''
   }, [apiBase, token, tenantId]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Cargar reporte por cuenta cuando el usuario abre esa vista
+  useEffect(() => {
+    if (subView !== 'by_account' || !token || !tenantId) return;
+    setAcctLoading(true);
+    fetch(`${apiBase}/inventory/report/by-account`, {
+      headers: { Authorization: `Bearer ${token}`, 'X-Tenant-Id': tenantId },
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setAcctData(d); })
+      .catch(() => {})
+      .finally(() => setAcctLoading(false));
+  }, [subView, token, tenantId, apiBase]);
 
   // ── filtros aplicados ────────────────────────────────────────
   const filteredItems = useMemo(() => {
@@ -811,84 +870,183 @@ export default function WarehouseCommandCenter({ apiBase = '/api/v1', token = ''
     say(`Artículo ${form.is_active ? 'desactivado' : 'activado'}: ${form.token_code}`);
   };
 
-  // ── validate purchases ────────────────────────────────────────
-  const handleValidatePurchases = () => {
+  // ── validate purchases — llama al backend Y actualiza estado local ──────────
+  const handleValidatePurchases = async () => {
     const toValidate = pendingPurchases.filter(p => p.checked);
     if (!toValidate.length) { alert('Seleccione al menos un artículo para validar'); return; }
 
-    const newMovements: Movement[] = [];
-    const newItems: WarehouseItem[] = [];
+    const warehouseId = warehouses[0]?.id;
+    if (!warehouseId) { alert('Configure un almacén primero'); return; }
 
-    for (const p of toValidate) {
-      // Buscar artículo existente en inventario
-      let targetId = p.product_id;
+    // ── PRIORIDAD: Backend persiste en BD. Estado local solo como fallback ──────
+    const hdrs = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+      'X-Tenant-Id': tenantId,
+    };
 
-      // Si no tiene product_id, intentar match con catálogo y crear artículo
-      if (!targetId) {
+    let success = 0;
+    const errors: string[] = [];
+
+    setLoading(true);
+    try {
+      for (const p of toValidate) {
+        // Preferir datos que ya vienen del backend (catalog_code del catálogo Python)
         const catalogMatch = matchCatalogItem(p.product_name, p.account_code, activeRubro);
-        const existingCodes = [...items, ...newItems].map(i => i.token_code);
-        const nat  = catalogMatch?.nat  || 'SU';
-        const cta  = catalogMatch?.cta  || (p.account_code?.slice(0, 3)) || '252';
-        const tk   = catalogMatch?.tk   || 'F';
-        const code = generateNextCode(existingCodes, cta, nat, activeRubro, tk as any);
+        const cta          = catalogMatch?.cta  || (p.account_code?.slice(0, 3)) || '252';
+        const nat          = p.catalog_nat  || catalogMatch?.nat  || 'SU';
+        const rub          = p.catalog_rub  || activeRubro || 'GE';
+        const tk           = p.catalog_tk   || catalogMatch?.tk   || 'F';
+        const catalogCode  = p.catalog_code || catalogMatch?.code || `${cta}-${nat}-${rub}-9999-${tk}`;
 
-        const newItem: WarehouseItem = {
-          id: `local-${Date.now()}-${p.id}`,
-          sku: code,
-          token_code: code,
-          name: catalogMatch?.name || p.product_name,
-          item_class: (cta.startsWith('24') ? 'MATERIA_PRIMA' : cta.startsWith('20') ? 'MERCADERIA' : cta.startsWith('33') ? (tk === 'T' ? 'HERRAMIENTAS' : 'ACTIVO_FIJO') : cta === '253' ? 'INSUMOS' : 'INSUMOS') as any,
-          token_type: tk === 'P' ? 'PERMANENTE' : 'TEMPORAL',
-          area: p.area,
-          unit_of_measure: catalogMatch?.unit || p.unit || 'UND',
-          default_cost: p.unit_cost,
-          default_cost_account: cta,
-          default_sales_account: catalogMatch?.gasto || '6569',
-          min_stock: 0, max_stock: 0,
-          is_active: true,
-          balance_qty: 0, balance_avg_cost: p.unit_cost, balance_value: 0,
+        const body = {
+          tenant_id:     tenantId,
+          warehouse_id:  warehouseId,
+          entry_id:      p.entry_id      || '',
+          source_doc:    p.source_doc    || `${p.doc_series}-${p.doc_number}`,
+          product_name:  catalogMatch?.name || p.product_name,
+          sku:           catalogCode,
+          unit:          catalogMatch?.unit || p.unit || 'UND',
+          qty:           p.qty,
+          unit_cost:     p.unit_cost,
+          item_class:    p.item_class    || 'MERCADERIA',
+          area:          p.area          || 'ALMACEN',
+          account_code:  cta,
+          cost_center:   p.cost_center   || 'LOG-ALM',
+          catalog_code:  catalogCode,
+          catalog_nat:   nat,
+          catalog_rub:   rub,
+          catalog_tk:    tk,
+          catalog_match: !!catalogMatch,
+          gasto_account: catalogMatch?.gasto || '',
+          post_journal:  false,
         };
-        newItems.push(newItem);
-        targetId = newItem.id;
+
+        try {
+          const res = await fetch(`${apiBase}/inventory/validate-purchase-items`, {
+            method: 'POST',
+            headers: hdrs,
+            body: JSON.stringify(body),
+          });
+          if (res.ok) {
+            success++;
+          } else {
+            const errText = await res.text();
+            errors.push(`${p.product_name}: ${errText}`);
+          }
+        } catch (e) {
+          errors.push(`${p.product_name}: error de red`);
+        }
       }
-
-      if (!targetId) continue;
-
-      newMovements.push({
-        id: `val-${Date.now()}-${p.id}`,
-        product_id: targetId,
-        warehouse_id: warehouses[0]?.id || 'w1',
-        movement_type: 'ENTRY' as MovType,
-        qty: p.qty,
-        unit_cost: p.unit_cost,
-        balance_qty: p.qty,
-        balance_avg_cost: p.unit_cost,
-        movement_reference: `ENT-VAL-${p.doc_series || 'XX'}-${p.doc_number || '000'}`,
-        source_document: `${p.doc_series || 'XX'}-${p.doc_number || '000'}`,
-        area: p.area,
-        validated_by: 'ADMIN',
-        notes: `[${p.doc_type === '09' ? 'GUÍA' : 'FACTURA'}] ${p.doc_series}-${p.doc_number} · ${p.supplier_name} · OC: ${p.purchase_ref} · Cta: ${p.account_code || '252'}`,
-        created_at: new Date().toISOString(),
-      });
+    } finally {
+      setLoading(false);
     }
 
-    // Agregar nuevos artículos e items al inventario
-    if (newItems.length) setItems(prev => [...prev, ...newItems]);
-    setMovements(prev => [...newMovements, ...prev]);
-
-    // Actualizar saldos (avg cost ponderado)
-    setItems(prev => prev.map(it => {
-      const match = toValidate.find(p => (p.product_id === it.id) || newMovements.find(m => m.product_id === it.id && m.source_document === `${p.doc_series}-${p.doc_number}`));
-      if (!match) return it;
-      const newQty = it.balance_qty + match.qty;
-      const newCost = newQty > 0 ? ((it.balance_qty * it.balance_avg_cost) + (match.qty * match.unit_cost)) / newQty : match.unit_cost;
-      return { ...it, balance_qty: newQty, balance_avg_cost: newCost, balance_value: newQty * newCost };
-    }));
-
-    setPendingPurchases(prev => prev.filter(p => !p.checked));
-    say(`✓ ${toValidate.length} ítem(s) de compra ingresados al almacén. ${newItems.length} artículo(s) nuevo(s) creados automáticamente.`);
-    onJournalPosted?.();
+    if (success > 0) {
+      setPendingPurchases(prev => prev.filter(p => !p.checked));
+      say(`✓ ${success} ítem(s) ingresados al kardex del almacén.${errors.length ? ` ${errors.length} con error.` : ''}`);
+      onJournalPosted?.();
+      // Recargar desde backend — datos reales reemplazan todo estado local
+      try { await loadData(); } catch { /* BD no disponible */ }
+    } else if (errors.length === toValidate.length) {
+      // Backend falló completamente → fallback con estado local
+      const newMovements: Movement[] = [];
+      const newItemsFb: WarehouseItem[] = [];
+      for (const p of toValidate) {
+        let targetId = p.product_id;
+        if (!targetId) {
+          const catalogMatch = matchCatalogItem(p.product_name, p.account_code, activeRubro);
+          const existingCodes = [...items, ...newItemsFb].map(i => i.token_code);
+          const nat  = catalogMatch?.nat  || 'SU';
+          const cta  = catalogMatch?.cta  || (p.account_code?.slice(0, 3)) || '252';
+          const tk   = catalogMatch?.tk   || 'F';
+          const code = generateNextCode(existingCodes, cta, nat, activeRubro, tk as any);
+          const newItem: WarehouseItem = {
+            id: `local-${Date.now()}-${p.id}`, sku: code, token_code: code,
+            name: catalogMatch?.name || p.product_name,
+            item_class: (cta.startsWith('24') ? 'MATERIA_PRIMA' : cta.startsWith('20') ? 'MERCADERIA' : cta.startsWith('33') ? (tk === 'T' ? 'HERRAMIENTAS' : 'ACTIVO_FIJO') : 'INSUMOS') as any,
+            token_type: tk === 'P' ? 'PERMANENTE' : 'TEMPORAL', area: p.area,
+            unit_of_measure: catalogMatch?.unit || p.unit || 'UND', default_cost: p.unit_cost,
+            default_cost_account: cta, default_sales_account: catalogMatch?.gasto || '6569',
+            min_stock: 0, max_stock: 0, is_active: true,
+            balance_qty: 0, balance_avg_cost: p.unit_cost, balance_value: 0,
+          };
+          newItemsFb.push(newItem); targetId = newItem.id;
+        }
+        if (!targetId) continue;
+        newMovements.push({
+          id: `val-${Date.now()}-${p.id}`, product_id: targetId,
+          warehouse_id: warehouseId || 'w1', movement_type: 'ENTRY' as MovType,
+          qty: p.qty, unit_cost: p.unit_cost, balance_qty: p.qty, balance_avg_cost: p.unit_cost,
+          movement_reference: `ENT-VAL-${p.doc_series || 'XX'}-${p.doc_number || '000'}`,
+          source_document: `${p.doc_series || 'XX'}-${p.doc_number || '000'}`,
+          area: p.area, validated_by: 'ADMIN',
+          notes: `[LOCAL] ${p.doc_series}-${p.doc_number} · ${p.supplier_name}`,
+          created_at: new Date().toISOString(),
+        });
+      }
+      if (newItemsFb.length) setItems(prev => [...prev, ...newItemsFb]);
+      setMovements(prev => [...newMovements, ...prev]);
+      setItems(prev => prev.map(it => {
+        const match = toValidate.find(p => p.product_id === it.id);
+        if (!match) return it;
+        const newQty = it.balance_qty + match.qty;
+        const newCost = newQty > 0 ? ((it.balance_qty * it.balance_avg_cost) + (match.qty * match.unit_cost)) / newQty : match.unit_cost;
+        return { ...it, balance_qty: newQty, balance_avg_cost: newCost, balance_value: newQty * newCost };
+      }));
+      setPendingPurchases(prev => prev.filter(p => !p.checked));
+      say(`⚠ Backend no disponible. ${toValidate.length} ítem(s) ingresados localmente (sin persistir en BD).`);
+      onJournalPosted?.();
+    }
+    if (errors.length && success > 0) {
+      alert(`Errores al ingresar al almacén:\n${errors.slice(0, 5).join('\n')}`);
+    }
+    if (success === 0 && errors.length === 0) {
+      say('Sin ítems procesados.');
+    }
   };
+
+  // ── handleExit — registra salida/baja con motivo (top-level para cumplir Rules of Hooks) ──
+  const handleExit = async () => {
+    if (!exitForm.product_id) { setExitMsg('Seleccione un artículo'); return; }
+    const qty = parseFloat(exitForm.qty);
+    if (!qty || qty <= 0) { setExitMsg('Cantidad inválida'); return; }
+    const warehouseId = warehouses[0]?.id;
+    if (!warehouseId) { setExitMsg('Sin almacén configurado'); return; }
+    setExitLoading(true); setExitMsg('');
+    try {
+      const hdrs = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, 'X-Tenant-Id': tenantId };
+      const body = {
+        tenant_id: tenantId, product_id: exitForm.product_id, warehouse_id: warehouseId,
+        qty, exit_reason: exitForm.exit_reason, notes: exitForm.notes,
+        movement_reference: exitForm.doc_ref || undefined, post_journal: true,
+      };
+      const res = await fetch(`${apiBase}/inventory/exit`, { method: 'POST', headers: hdrs, body: JSON.stringify(body) });
+      if (!res.ok) { setExitMsg(`Error: ${await res.text()}`); return; }
+      const data = await res.json();
+      const reason = EXIT_REASONS.find(r => r.code === exitForm.exit_reason);
+      setExitMsg(`${reason?.icon} ${data.qty} und | S/. ${data.total_cost} | Saldo: ${data.new_balance_qty} und`);
+      setExitForm(f => ({ ...f, product_id: '', qty: '1', notes: '', doc_ref: '' }));
+      await loadData();
+    } catch { setExitMsg('Error de conexión'); } finally { setExitLoading(false); }
+  };
+
+  // ── handleRefreshAcct — actualiza reporte por cuenta ─────────────────────
+  const handleRefreshAcct = () => {
+    if (!token || !tenantId) return;
+    setAcctLoading(true);
+    fetch(`${apiBase}/inventory/report/by-account`, {
+      headers: { Authorization: `Bearer ${token}`, 'X-Tenant-Id': tenantId },
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setAcctData(d); })
+      .catch(() => {})
+      .finally(() => setAcctLoading(false));
+  };
+
+  const toggleAcctExpanded = (code: string) => setAcctExpanded(prev => {
+    const s = new Set(prev); s.has(code) ? s.delete(code) : s.add(code); return s;
+  });
 
   // ── toggle all checkbox ───────────────────────────────────────
   const allChecked = pendingPurchases.length > 0 && pendingPurchases.every(p => p.checked);
@@ -1023,10 +1181,11 @@ export default function WarehouseCommandCenter({ apiBase = '/api/v1', token = ''
             { id: 'kardex',      icon: '📊',  label: 'Kardex',              desc: 'Historial por artículo' },
             { id: 'warehouses',  icon: '🏭',  label: 'Almacenes',           desc: 'Gestión de bodegas' },
             { id: 'entries',     icon: '📥',  label: 'Entradas',            desc: 'Ingresos al almacén' },
-            { id: 'exits',       icon: '📤',  label: 'Salidas',             desc: 'Salidas despacho' },
+            { id: 'exits',       icon: '📤',  label: 'Salidas / Bajas',     desc: 'Salidas, desgaste, antigüedad' },
             { id: 'adjustments', icon: '⚖',  label: 'Ajustes',             desc: 'Diferencias y ajustes' },
             { id: 'tokens',      icon: '🏷',  label: 'Códigos / Tokens',    desc: 'Gestión de códigos' },
-            { id: 'reports',       icon: '📈',  label: 'Reportes',              desc: 'Valorización y stock' },
+            { id: 'reports',     icon: '📈',  label: 'Reportes',            desc: 'Valorización y stock' },
+            { id: 'by_account',  icon: '🔢',  label: 'Por Cuenta PCGE',     desc: 'Rotación y valor por cuenta' },
             { id: 'tool_delivery', icon: '🔧',  label: 'Entrega Herram.',        desc: 'Asignar a trabajador/obra' },
             { id: 'tool_return',   icon: '↩',   label: 'Devolución Herram.',     desc: 'Retorno al almacén' },
             { id: 'dispatch',      icon: '📦',  label: 'Despacho Mercadería',    desc: 'Salidas para venta/prod.' },
@@ -1083,6 +1242,33 @@ export default function WarehouseCommandCenter({ apiBase = '/api/v1', token = ''
               ))}
             </>
           )}
+
+          {/* Botones de mantenimiento de BD */}
+          <div style={{ borderTop: `1px solid ${C.border}`, padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 4, flexShrink: 0 }}>
+            <button style={{ ...btn('primary'), fontSize: 9, padding: '3px 8px', width: '100%' }} onClick={() => loadData()}>
+              🔄 Recargar BD
+            </button>
+            <button style={{ ...btn('danger'), fontSize: 9, padding: '3px 8px', width: '100%' }}
+              onClick={async () => {
+                if (!confirm('¿Eliminar movimientos y saldos de prueba? (productos se conservan)')) return;
+                const hdrs = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, 'X-Tenant-Id': tenantId };
+                const res = await fetch(`${apiBase}/inventory/reset-test-data`, { method: 'DELETE', headers: hdrs });
+                if (res.ok) { const d = await res.json(); alert(`✓ ${d.deleted_movements} movimientos y ${d.deleted_balances} saldos eliminados.`); await loadData(); }
+                else { alert('Error: ' + await res.text()); }
+              }}>
+              🗑 Limpiar movimientos
+            </button>
+            <button style={{ ...btn('danger'), fontSize: 9, padding: '3px 8px', width: '100%' }}
+              onClick={async () => {
+                if (!confirm('¿Eliminar TODOS los productos de prueba junto con sus movimientos y saldos?')) return;
+                const hdrs = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, 'X-Tenant-Id': tenantId };
+                const res = await fetch(`${apiBase}/inventory/reset-products`, { method: 'DELETE', headers: hdrs });
+                if (res.ok) { const d = await res.json(); alert(`✓ ${d.deleted_products} productos eliminados.`); await loadData(); }
+                else { alert('Error: ' + await res.text()); }
+              }}>
+              🗑 Limpiar productos
+            </button>
+          </div>
         </aside>
 
         {/* ── ÁREA DE CONTENIDO PRINCIPAL ── */}
@@ -1213,48 +1399,121 @@ export default function WarehouseCommandCenter({ apiBase = '/api/v1', token = ''
             </table>
           </div>
         )}
-        {subView === 'exits' && (
-          <div style={{ flex: 1, overflowY: 'auto', padding: 20 }}>
-            <h3 style={{ color: C.accentR, margin: '0 0 12px', fontSize: 15 }}>📤 Salidas del Almacén</h3>
-            {movements.filter(m => m.movement_type === 'EXIT').length === 0 && (
-              <div style={{ color: C.textDim, fontSize: 13, padding: 20, textAlign: 'center' }}>Sin salidas registradas. Use Despacho de Mercadería o Entrega de Herramientas.</div>
-            )}
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead><tr>{['Fecha', 'Artículo', 'Clase', 'Área', 'Cant', 'Costo U.', 'Valor S/', 'Documento', 'Referencia', 'Acciones'].map(h => <th key={h} style={th}>{h}</th>)}</tr></thead>
-              <tbody>
-                {movements.filter(m => m.movement_type === 'EXIT').map((m, idx) => {
-                  const it = items.find(i => i.id === m.product_id);
-                  return (
-                    <tr key={m.id} style={{ background: idx % 2 === 0 ? C.bgRow : C.bgRowAlt }}>
-                      <td style={td}>{fmtDateTime(m.created_at)}</td>
-                      <td style={{ ...td, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it?.name || m.product_id}</td>
-                      <td style={td}>{it && <ClassBadge cls={it.item_class} />}</td>
-                      <td style={{ ...td, fontSize: 11, color: C.textMut }}>{m.area}</td>
-                      <td style={{ ...td, textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, color: C.accentR }}>-{fmt(m.qty, 0)}</td>
-                      <td style={{ ...td, textAlign: 'right', fontFamily: 'monospace' }}>S/ {fmt(m.unit_cost)}</td>
-                      <td style={{ ...td, textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, color: C.accentR }}>S/ {fmt(m.qty * m.unit_cost)}</td>
-                      <td style={{ ...td, fontFamily: 'monospace', fontSize: 11 }}>{m.source_document}</td>
-                      <td style={{ ...td, fontFamily: 'monospace', fontSize: 11, color: C.accent }}>{m.movement_reference}</td>
-                      <td style={td}>
-                        <button style={{ ...btn('danger'), fontSize: 10, padding: '2px 7px' }}
-                          onClick={() => { if (confirm('¿Eliminar este movimiento?')) setMovements(prev => prev.filter(x => x.id !== m.id)); }}>🗑</button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-              <tfoot>
-                <tr style={{ background: C.bg }}>
-                  <td colSpan={7} style={{ ...td, borderTop: `2px solid ${C.border}`, fontWeight: 700, color: C.textMut }}>Total salidas</td>
-                  <td style={{ ...td, borderTop: `2px solid ${C.border}`, textAlign: 'right', fontFamily: 'monospace', fontWeight: 800, color: C.accentR }}>
-                    S/ {fmt(movements.filter(m => m.movement_type === 'EXIT').reduce((s, m) => s + m.qty * m.unit_cost, 0))}
-                  </td>
-                  <td colSpan={2} style={{ ...td, borderTop: `2px solid ${C.border}` }} />
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        )}
+        {subView === 'exits' && (() => {
+          // Derivados — no son hooks, son cálculos
+          const selectedProduct = items.find(i => i.id === exitForm.product_id);
+          const selectedReason  = EXIT_REASONS.find(r => r.code === exitForm.exit_reason);
+          const exitQty         = parseFloat(exitForm.qty) || 0;
+          const estimatedValue  = selectedProduct ? exitQty * selectedProduct.balance_avg_cost : 0;
+          return (
+            <div style={{ flex: 1, overflowY: 'auto', padding: 20 }}>
+              <h3 style={{ color: C.accentR, margin: '0 0 16px', fontSize: 15 }}>📤 Salidas / Bajas de Inventario</h3>
+              <div style={{ background: C.bgCard, border: `1px solid ${C.accentR}44`, borderRadius: 10, padding: 16, marginBottom: 24 }}>
+                <p style={{ margin: '0 0 14px', fontSize: 12, fontWeight: 700, color: C.accentR, letterSpacing: '0.07em' }}>REGISTRAR SALIDA / BAJA</p>
+                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
+                  <div>
+                    <label style={labelStyle}>Artículo *</label>
+                    <select style={selectStyle} value={exitForm.product_id} onChange={e => setExitForm(f => ({ ...f, product_id: e.target.value }))}>
+                      <option value="">— Seleccionar artículo —</option>
+                      {items.filter(i => i.balance_qty > 0 && i.is_active).map(i => (
+                        <option key={i.id} value={i.id}>
+                          {i.token_code} · {i.name} (Disp: {fmt(i.balance_qty, 0)} {i.unit_of_measure} | Costo avg: S/ {fmt(i.balance_avg_cost)})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Cantidad *</label>
+                    <input type="number" min="0.01" step="0.01" style={inputStyle} value={exitForm.qty}
+                      onChange={e => setExitForm(f => ({ ...f, qty: e.target.value }))} placeholder="0" />
+                    {selectedProduct && exitQty > selectedProduct.balance_qty && (
+                      <div style={{ color: C.accentR, fontSize: 10, marginTop: 2 }}>⚠ Excede stock disponible ({fmt(selectedProduct.balance_qty, 0)})</div>
+                    )}
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Doc. Referencia</label>
+                    <input style={inputStyle} value={exitForm.doc_ref} onChange={e => setExitForm(f => ({ ...f, doc_ref: e.target.value }))} placeholder="Ej: BAJA-2026-001" />
+                  </div>
+                </div>
+                <label style={{ ...labelStyle, marginBottom: 8, display: 'block' }}>Motivo de salida *</label>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6, marginBottom: 12 }}>
+                  {EXIT_REASONS.map(r => (
+                    <button key={r.code} onClick={() => setExitForm(f => ({ ...f, exit_reason: r.code }))}
+                      style={{ background: exitForm.exit_reason === r.code ? r.color + '22' : C.bg, border: `1px solid ${exitForm.exit_reason === r.code ? r.color : C.border}`, borderRadius: 6, padding: '6px 8px', cursor: 'pointer', textAlign: 'left' }}>
+                      <div style={{ fontSize: 13 }}>{r.icon}</div>
+                      <div style={{ fontSize: 10, color: exitForm.exit_reason === r.code ? r.color : C.textMut, fontWeight: 600, lineHeight: 1.2 }}>{r.label}</div>
+                    </button>
+                  ))}
+                </div>
+                <div style={{ marginBottom: 12 }}>
+                  <label style={labelStyle}>Observaciones / Sustento</label>
+                  <input style={inputStyle} value={exitForm.notes} onChange={e => setExitForm(f => ({ ...f, notes: e.target.value }))}
+                    placeholder="Ej: Herramienta inutilizable por desgaste excesivo — acta N° 012" />
+                </div>
+                {selectedProduct && exitQty > 0 && (
+                  <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: 10, marginBottom: 12, fontFamily: 'monospace', fontSize: 11 }}>
+                    <div style={{ color: C.textMut, marginBottom: 4, fontFamily: 'sans-serif', fontSize: 10, fontWeight: 700 }}>ASIENTO AUTOMÁTICO QUE SE GENERARÁ:</div>
+                    <div style={{ color: C.accentR }}>  DEBE  {selectedReason?.label}  S/ {fmt(estimatedValue)}</div>
+                    <div style={{ color: C.accentG }}>  HABER Inventario {selectedProduct.token_code}  S/ {fmt(estimatedValue)}</div>
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                  <button style={{ ...btn('danger'), minWidth: 160 }} onClick={handleExit} disabled={exitLoading}>
+                    {exitLoading ? '⏳ Registrando...' : '📤 Registrar Salida / Baja'}
+                  </button>
+                  {exitMsg && <span style={{ fontSize: 12, color: exitMsg.startsWith('Error') ? C.accentR : C.accentG }}>{exitMsg}</span>}
+                </div>
+              </div>
+              <h4 style={{ color: C.textMut, fontSize: 12, marginBottom: 8 }}>Historial de Salidas y Bajas</h4>
+              {movements.filter(m => m.movement_type === 'EXIT').length === 0 && (
+                <div style={{ color: C.textDim, fontSize: 13, padding: 20, textAlign: 'center' }}>Sin salidas registradas aún.</div>
+              )}
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr>{['Fecha', 'Código', 'Artículo', 'Clase', 'Área', 'Motivo / Nota', 'Cant', 'Costo U.', 'Valor S/', 'Documento', 'Referencia', 'Acciones'].map(h => <th key={h} style={th}>{h}</th>)}</tr>
+                </thead>
+                <tbody>
+                  {movements.filter(m => m.movement_type === 'EXIT').map((m, idx) => {
+                    const it         = items.find(i => i.id === m.product_id);
+                    const reasonCode = (m.notes || '').match(/\[([A-Z_]+)\]/)?.[1] || '';
+                    const reasonDef  = EXIT_REASONS.find(r => r.code === reasonCode);
+                    return (
+                      <tr key={m.id} style={{ background: idx % 2 === 0 ? C.bgRow : C.bgRowAlt }}>
+                        <td style={{ ...td, whiteSpace: 'nowrap' }}>{fmtDateTime(m.created_at)}</td>
+                        <td style={{ ...td, fontFamily: 'monospace', fontSize: 10, color: C.accent }}>{it?.token_code || '-'}</td>
+                        <td style={{ ...td, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it?.name || m.product_id}</td>
+                        <td style={td}>{it && <ClassBadge cls={it.item_class} />}</td>
+                        <td style={{ ...td, fontSize: 11, color: C.textMut }}>{m.area}</td>
+                        <td style={{ ...td, fontSize: 11 }}>
+                          {reasonDef && <span style={{ background: reasonDef.color + '22', color: reasonDef.color, borderRadius: 4, padding: '1px 5px', marginRight: 4, fontWeight: 600 }}>{reasonDef.icon} {reasonDef.label}</span>}
+                          <span style={{ color: C.textMut }}>{(m.notes || '').replace(/\[[A-Z_]+\]/, '').trim()}</span>
+                        </td>
+                        <td style={{ ...td, textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, color: C.accentR }}>-{fmt(m.qty, 0)}</td>
+                        <td style={{ ...td, textAlign: 'right', fontFamily: 'monospace' }}>S/ {fmt(m.unit_cost)}</td>
+                        <td style={{ ...td, textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, color: C.accentR }}>S/ {fmt(m.qty * m.unit_cost)}</td>
+                        <td style={{ ...td, fontFamily: 'monospace', fontSize: 11 }}>{m.source_document}</td>
+                        <td style={{ ...td, fontFamily: 'monospace', fontSize: 11, color: C.accent }}>{m.movement_reference}</td>
+                        <td style={td}>
+                          <button style={{ ...btn('danger'), fontSize: 10, padding: '2px 7px' }}
+                            onClick={() => { if (confirm('¿Eliminar este movimiento?')) setMovements(prev => prev.filter(x => x.id !== m.id)); }}>🗑</button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr style={{ background: C.bg }}>
+                    <td colSpan={8} style={{ ...td, borderTop: `2px solid ${C.border}`, fontWeight: 700, color: C.textMut }}>Total salidas / bajas</td>
+                    <td style={{ ...td, borderTop: `2px solid ${C.border}`, textAlign: 'right', fontFamily: 'monospace', fontWeight: 800, color: C.accentR }}>
+                      S/ {fmt(movements.filter(m => m.movement_type === 'EXIT').reduce((s, m) => s + m.qty * m.unit_cost, 0))}
+                    </td>
+                    <td colSpan={3} style={{ ...td, borderTop: `2px solid ${C.border}` }} />
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          );
+        })()}
         {subView === 'adjustments' && (
           <div style={{ flex: 1, overflowY: 'auto', padding: 20 }}>
             <h3 style={{ color: C.accentY, margin: '0 0 12px', fontSize: 15 }}>⚖ Ajustes de Inventario</h3>
@@ -1403,6 +1662,127 @@ export default function WarehouseCommandCenter({ apiBase = '/api/v1', token = ''
           </div>
         )}
         {/* ─────────────────────────────────────────────────
+            SUB-VISTA: POR CUENTA PCGE — ROTACIÓN Y VALOR
+            ───────────────────────────────────────────────── */}
+        {subView === 'by_account' && (() => {
+          const ROTATION_COLOR = (pct: number) => pct >= 80 ? '#f85149' : pct >= 40 ? '#d29922' : '#3fb950';
+          return (
+            <div style={{ flex: 1, overflowY: 'auto', padding: 20 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <h3 style={{ color: C.accent, margin: 0, fontSize: 15 }}>🔢 Inventario por Cuenta PCGE — Rotación y Valor</h3>
+                <button style={btn('primary')} onClick={handleRefreshAcct}>🔄 Actualizar</button>
+              </div>
+
+              {acctLoading && <div style={{ color: C.textMut, textAlign: 'center', padding: 40 }}>⏳ Cargando datos...</div>}
+
+              {acctData && (
+                <>
+                  {/* Totales */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 20 }}>
+                    {[
+                      { label: 'Valor total inventario', value: `S/ ${fmt(acctData.grand_total_value)}`, color: C.accentG },
+                      { label: 'Cuentas PCGE activas',   value: String(acctData.accounts_count),         color: C.accent },
+                      { label: 'Artículos totales',      value: String(acctData.by_account?.reduce((s: number, a: any) => s + a.products_count, 0) || 0), color: C.textMut },
+                    ].map(m => (
+                      <div key={m.label} style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, padding: 14 }}>
+                        <div style={{ fontSize: 11, color: C.textMut }}>{m.label}</div>
+                        <div style={{ fontSize: 20, fontWeight: 800, color: m.color, fontFamily: 'monospace' }}>{m.value}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Tabla por cuenta */}
+                  {(acctData.by_account || []).map((acc: any) => (
+                    <div key={acc.account_code} style={{ marginBottom: 12, border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden' }}>
+                      {/* Header de cuenta — clic para expandir */}
+                      <div onClick={() => toggleAcctExpanded(acc.account_code)} style={{ background: C.bgCard, padding: '10px 14px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                          <span style={{ fontFamily: 'monospace', fontWeight: 800, color: C.accent, fontSize: 14 }}>{acc.account_code}</span>
+                          <span style={{ color: C.text, fontSize: 13 }}>{acc.account_name}</span>
+                          <span style={{ background: C.bg, borderRadius: 4, padding: '2px 7px', fontSize: 11, color: C.textMut }}>{acc.products_count} art.</span>
+                        </div>
+                        <div style={{ display: 'flex', gap: 20, alignItems: 'center' }}>
+                          <div style={{ textAlign: 'right' }}>
+                            <div style={{ fontSize: 10, color: C.textMut }}>Valor</div>
+                            <div style={{ fontFamily: 'monospace', fontWeight: 800, color: C.accentG }}>S/ {fmt(acc.total_value)}</div>
+                          </div>
+                          <div style={{ textAlign: 'right' }}>
+                            <div style={{ fontSize: 10, color: C.textMut }}>Entradas</div>
+                            <div style={{ fontFamily: 'monospace', color: C.accentG }}>{fmt(acc.total_entries_qty, 0)}</div>
+                          </div>
+                          <div style={{ textAlign: 'right' }}>
+                            <div style={{ fontSize: 10, color: C.textMut }}>Salidas</div>
+                            <div style={{ fontFamily: 'monospace', color: C.accentR }}>{fmt(acc.total_exits_qty, 0)}</div>
+                          </div>
+                          <div style={{ textAlign: 'center', minWidth: 60 }}>
+                            <div style={{ fontSize: 10, color: C.textMut }}>Rotación</div>
+                            <div style={{ fontFamily: 'monospace', fontWeight: 700, color: ROTATION_COLOR(acc.rotation_pct) }}>{acc.rotation_pct}%</div>
+                          </div>
+                          <span style={{ color: C.textMut, fontSize: 14 }}>{acctExpanded.has(acc.account_code) ? '▲' : '▼'}</span>
+                        </div>
+                      </div>
+
+                      {/* Detalle por artículo */}
+                      {acctExpanded.has(acc.account_code) && (
+                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                          <thead>
+                            <tr style={{ background: C.bg }}>
+                              {['Token Code', 'Artículo', 'Clase', 'Stock', 'Costo Avg', 'Valor S/', 'Entradas', 'Salidas', 'Rotación', 'Estado'].map(h => (
+                                <th key={h} style={{ ...th, fontSize: 10 }}>{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(acc.items || []).map((item: any, idx: number) => (
+                              <tr key={item.product_id} style={{ background: idx % 2 === 0 ? C.bgRow : C.bgRowAlt }}>
+                                <td style={{ ...td, fontFamily: 'monospace', fontSize: 10, color: C.accent }}>{item.token_code}</td>
+                                <td style={{ ...td, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</td>
+                                <td style={td}><ClassBadge cls={item.item_class as ItemClass} /></td>
+                                <td style={{ ...td, textAlign: 'right', fontFamily: 'monospace', fontWeight: 700 }}>{fmt(item.balance_qty, 0)} {item.unit}</td>
+                                <td style={{ ...td, textAlign: 'right', fontFamily: 'monospace' }}>S/ {fmt(item.avg_cost)}</td>
+                                <td style={{ ...td, textAlign: 'right', fontFamily: 'monospace', fontWeight: 800, color: C.accentG }}>S/ {fmt(item.balance_value)}</td>
+                                <td style={{ ...td, textAlign: 'right', fontFamily: 'monospace', color: C.accentG }}>▲ {fmt(item.entries_qty, 0)}</td>
+                                <td style={{ ...td, textAlign: 'right', fontFamily: 'monospace', color: C.accentR }}>▼ {fmt(item.exits_qty, 0)}</td>
+                                <td style={{ ...td, textAlign: 'center' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'center' }}>
+                                    <div style={{ width: 40, height: 5, borderRadius: 3, background: C.border }}>
+                                      <div style={{ height: '100%', width: `${Math.min(item.rotation_pct, 100)}%`, background: ROTATION_COLOR(item.rotation_pct), borderRadius: 3 }} />
+                                    </div>
+                                    <span style={{ fontSize: 10, color: ROTATION_COLOR(item.rotation_pct), fontWeight: 600 }}>{item.rotation_pct}%</span>
+                                  </div>
+                                </td>
+                                <td style={{ ...td, textAlign: 'center' }}>
+                                  <span style={{ fontSize: 10, fontWeight: 600, color: item.stock_status === 'OK' ? C.accentG : item.stock_status === 'AGOTADO' ? C.accentR : C.textMut }}>
+                                    {item.stock_status === 'OK' ? '✓ OK' : item.stock_status === 'AGOTADO' ? '⚠ AGOTADO' : '• NUEVO'}
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                          <tfoot>
+                            <tr style={{ background: C.bg }}>
+                              <td colSpan={5} style={{ ...td, borderTop: `1px solid ${C.border}`, fontWeight: 700, color: C.textMut, fontSize: 11 }}>Subtotal cuenta {acc.account_code}</td>
+                              <td style={{ ...td, borderTop: `1px solid ${C.border}`, textAlign: 'right', fontFamily: 'monospace', fontWeight: 800, color: C.accentG }}>S/ {fmt(acc.total_value)}</td>
+                              <td style={{ ...td, borderTop: `1px solid ${C.border}`, textAlign: 'right', fontFamily: 'monospace', color: C.accentG }}>{fmt(acc.total_entries_qty, 0)}</td>
+                              <td style={{ ...td, borderTop: `1px solid ${C.border}`, textAlign: 'right', fontFamily: 'monospace', color: C.accentR }}>{fmt(acc.total_exits_qty, 0)}</td>
+                              <td colSpan={2} style={{ ...td, borderTop: `1px solid ${C.border}` }} />
+                            </tr>
+                          </tfoot>
+                        </table>
+                      )}
+                    </div>
+                  ))}
+                </>
+              )}
+              {!acctData && !acctLoading && (
+                <div style={{ textAlign: 'center', padding: 40, color: C.textMut }}>
+                  Sin datos de inventario aún. Registre compras y valide el ingreso al almacén.
+                </div>
+              )}
+            </div>
+          );
+        })()}
+        {/* ─────────────────────────────────────────────────
             SUB-VISTA: ENTREGA DE HERRAMIENTAS
             ───────────────────────────────────────────────── */}
         {subView === 'tool_delivery' && (
@@ -1463,59 +1843,88 @@ export default function WarehouseCommandCenter({ apiBase = '/api/v1', token = ''
                 if (!toolForm.tool_id || !toolForm.worker_name) { alert('Seleccione herramienta y nombre del trabajador'); return; }
                 const tool = items.find(i => i.id === toolForm.tool_id);
                 if (!tool) return;
+                const now   = new Date();
+                const dateStr = now.toLocaleDateString('en-CA').replace(/-/g, '');
+                // Token temporal de asignación: ASG-{token_code}-{worker_doc}-{YYYYMMDD}
+                // Identifica de forma única esta asignación. Se elimina al devolver.
+                const workerKey = (toolForm.worker_doc || toolForm.worker_name.slice(0, 6)).replace(/\s/g, '').slice(0, 8);
+                // Código compacto: ASG-{CTA}{NAT}-{SEQQ}-{DNI8}-{MMDD}
+                const toolShort = (tool.token_code || tool.sku || 'ITEM').split('-').slice(0,2).join('').slice(0, 8).toUpperCase();
+                const asgToken  = `ASG-${toolShort}-${workerKey}-${dateStr.slice(4)}`;
                 const newAssign: ToolAssignment = {
-                  id: `ta-${Date.now()}`,
-                  tool_id: toolForm.tool_id,
-                  tool_code: tool.token_code,
-                  tool_name: tool.name,
-                  worker_name: toolForm.worker_name,
-                  worker_doc: toolForm.worker_doc,
-                  project: toolForm.project,
-                  area: toolForm.area,
-                  assigned_date: new Date().toLocaleDateString('en-CA'),
+                  id:              `ta-${Date.now()}`,
+                  tool_id:         toolForm.tool_id,
+                  tool_code:       tool.token_code,
+                  tool_name:       tool.name,
+                  worker_name:     toolForm.worker_name,
+                  worker_doc:      toolForm.worker_doc,
+                  project:         toolForm.project,
+                  area:            toolForm.area,
+                  assigned_date:   now.toLocaleDateString('en-CA'),
                   expected_return: toolForm.expected_return,
-                  status: 'ASIGNADO',
-                  condition_out: toolForm.condition_out,
-                  notes: toolForm.notes,
+                  status:          'ASIGNADO',
+                  condition_out:   toolForm.condition_out,
+                  notes:           toolForm.notes,
+                  asg_token:       asgToken,
+                  started_at:      now.toISOString(),
                 };
                 setToolAssignments(prev => [newAssign, ...prev]);
-                // Reducir stock (salida)
                 setMovements(prev => [{
                   id: `m-td-${Date.now()}`, product_id: toolForm.tool_id, warehouse_id: 'w3',
                   movement_type: 'EXIT', qty: 1, unit_cost: tool.default_cost,
                   balance_qty: tool.balance_qty - 1, balance_avg_cost: tool.balance_avg_cost,
-                  movement_reference: `ENT-HERR-${newAssign.id}`,
-                  source_document: `ASIGNACION-${toolForm.worker_doc}`,
+                  movement_reference: asgToken,
+                  source_document: `ASIGN-${workerKey}`,
                   area: toolForm.area, validated_by: 'ALMACEN',
-                  notes: `Entregado a ${toolForm.worker_name} · ${toolForm.project}`,
-                  created_at: new Date().toISOString(),
+                  notes: `[ASIGNACION] ${asgToken} → ${toolForm.worker_name} · ${toolForm.project}`,
+                  created_at: now.toISOString(),
                 }, ...prev]);
                 setItems(prev => prev.map(i => i.id === toolForm.tool_id ? { ...i, balance_qty: i.balance_qty - 1, balance_value: (i.balance_qty - 1) * i.balance_avg_cost } : i));
                 setToolForm({ tool_id: '', worker_name: '', worker_doc: '', project: '', area: 'OBRA', expected_return: '', condition_out: 'BUENO', notes: '' });
-                say(`✓ Herramienta ${tool.token_code} entregada a ${toolForm.worker_name}`);
+                say(`✓ Token ${asgToken} generado. ${tool.name} entregada a ${toolForm.worker_name}`);
               }}>
                 🔧 Registrar Entrega
               </button>
             </div>
 
-            {/* Tabla de asignaciones activas */}
-            <h4 style={{ color: C.textMut, fontSize: 12, marginBottom: 8 }}>ASIGNACIONES ACTIVAS</h4>
+            {/* Tabla de asignaciones */}
+            <h4 style={{ color: C.textMut, fontSize: 12, marginBottom: 8 }}>ASIGNACIONES ACTIVAS — TOKEN TEMPORAL ASG</h4>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead><tr>{['Código', 'Herramienta', 'Trabajador', 'DNI', 'Proyecto / Área', 'Asignado', 'Dev. Prevista', 'Estado', 'Condición'].map(h => <th key={h} style={th}>{h}</th>)}</tr></thead>
+              <thead>
+                <tr>
+                  {['Código Tool', 'Token ASG (temporal)', 'Herramienta', 'Trabajador', 'DNI', 'Proyecto / Área', 'Asignado', 'Dev. Prevista', 'Horas uso', 'Estado', 'Condición Salida'].map(h => (
+                    <th key={h} style={th}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
               <tbody>
                 {toolAssignments.map((a, idx) => {
                   const color = a.status === 'DEVUELTO' ? C.accentG : a.status === 'VENCIDO' ? C.accentR : C.accentO;
+                  const hoursUsed = a.status === 'ASIGNADO' && a.started_at
+                    ? Math.round((Date.now() - new Date(a.started_at).getTime()) / 3600000 * 10) / 10
+                    : (a.hours_assigned || 0);
                   return (
                     <tr key={a.id} style={{ background: idx % 2 === 0 ? C.bgRow : C.bgRowAlt }}>
+                      {/* Código permanente del artículo */}
                       <td style={{ ...td, fontFamily: 'monospace', fontSize: 11, color: C.accentO }}>{a.tool_code}</td>
-                      <td style={{ ...td, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={a.tool_name}>{a.tool_name}</td>
+                      {/* Token temporal de asignación — tachado al devolver */}
+                      <td style={{ ...td, fontFamily: 'monospace', fontSize: 10, color: a.status === 'ASIGNADO' ? C.accentY : C.textMut }}>
+                        {a.status === 'ASIGNADO'
+                          ? <span title="Token activo — se desactiva al devolver">{a.asg_token}</span>
+                          : <span style={{ textDecoration: 'line-through', opacity: 0.45 }}>{a.asg_token}</span>
+                        }
+                      </td>
+                      <td style={{ ...td, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={a.tool_name}>{a.tool_name}</td>
                       <td style={{ ...td, fontWeight: 600 }}>{a.worker_name}</td>
                       <td style={{ ...td, fontFamily: 'monospace', fontSize: 11, color: C.textDim }}>{a.worker_doc}</td>
                       <td style={{ ...td, fontSize: 11 }}>{a.project} · <span style={{ color: C.textDim }}>{AREA_PREFIX[a.area]}</span></td>
                       <td style={{ ...td, fontSize: 11 }}>{fmtDate(a.assigned_date)}</td>
                       <td style={{ ...td, fontSize: 11, color: a.status === 'VENCIDO' ? C.accentR : C.textMut }}>{fmtDate(a.expected_return)}</td>
+                      <td style={{ ...td, textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, color: a.status === 'ASIGNADO' ? C.accentY : C.textMut }}>
+                        {a.status === 'ASIGNADO' ? `${hoursUsed}h ⏱` : a.hours_assigned ? `${a.hours_assigned}h` : '-'}
+                      </td>
                       <td style={td}><span style={{ color, fontWeight: 700, fontSize: 11 }}>● {a.status}</span></td>
-                      <td style={{ ...td, fontSize: 11, color: C.textMut }}>{a.condition_out}</td>
+                      <td style={{ ...td, fontSize: 11, color: C.textMut }}>{a.condition_out}{a.condition_in ? ` → ${a.condition_in}` : ''}</td>
                     </tr>
                   );
                 })}
@@ -1540,23 +1949,37 @@ export default function WarehouseCommandCenter({ apiBase = '/api/v1', token = ''
           const workerData = selectedWorkerKey ? workerMap.get(selectedWorkerKey) : null;
 
           const doReturn = (ids: string[], cond: string) => {
+            const now = new Date();
             setToolAssignments(prev => prev.map(a => {
               if (!ids.includes(a.id) || a.status === 'DEVUELTO') return a;
+              // Calcular horas reales de uso
+              const hoursUsed = a.started_at
+                ? Math.round((now.getTime() - new Date(a.started_at).getTime()) / 3600000 * 10) / 10
+                : 0;
               setItems(pi => pi.map(i => i.id === a.tool_id ? { ...i, balance_qty: i.balance_qty + 1, balance_value: (i.balance_qty + 1) * i.balance_avg_cost } : i));
               setMovements(pm => [{
                 id: `m-tr-${Date.now()}-${a.id}`, product_id: a.tool_id, warehouse_id: 'w3',
                 movement_type: 'ENTRY', qty: 1, unit_cost: 0,
                 balance_qty: 1, balance_avg_cost: 0,
-                movement_reference: `DEV-${a.id.slice(-6)}`,
+                movement_reference: `DEV-${a.asg_token || a.id.slice(-6)}`,
                 source_document: `DEVOLUCION-${a.worker_doc}`,
                 area: a.area, validated_by: 'ALMACEN',
-                notes: `Devuelto por ${a.worker_name} — Cond: ${cond}`,
-                created_at: new Date().toISOString(),
+                notes: `[DEVOLUCION] ${a.asg_token} | ${hoursUsed}h uso | Cond: ${cond} | ${a.worker_name}`,
+                created_at: now.toISOString(),
               }, ...pm]);
-              return { ...a, status: 'DEVUELTO' as AssignStatus, condition_in: cond, actual_return: new Date().toLocaleDateString('en-CA') };
+              // Al devolver: token ASG queda tachado (status DEVUELTO), se registran horas
+              return {
+                ...a,
+                status:        'DEVUELTO' as AssignStatus,
+                condition_in:  cond,
+                actual_return: now.toLocaleDateString('en-CA'),
+                returned_at:   now.toISOString(),
+                hours_assigned: hoursUsed,
+                // asg_token permanece para historial pero ya no está activo
+              };
             }));
             setReturnChecked(new Set());
-            say(`✓ ${ids.length} ítem(s) devuelto(s)`);
+            say(`✓ ${ids.length} ítem(s) devuelto(s) al almacén. Token ASG desactivado.`);
           };
 
           return (
@@ -1639,7 +2062,7 @@ export default function WarehouseCommandCenter({ apiBase = '/api/v1', token = ''
 
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                       <thead>
-                        <tr>{['', 'Código', 'Herramienta / Accesorio', 'Proyecto', 'Asignado', 'Dev. Prevista', 'Cond. Salida', 'Estado', 'Retorno'].map(h => (
+                        <tr>{['', 'Código', 'Token ASG', 'Herramienta / Accesorio', 'Proyecto', 'Asignado', 'Dev. Prevista', 'Horas uso', 'Cond. Salida', 'Estado', 'Retorno'].map(h => (
                           <th key={h} style={th}>{h}</th>
                         ))}</tr>
                       </thead>
@@ -1649,6 +2072,9 @@ export default function WarehouseCommandCenter({ apiBase = '/api/v1', token = ''
                           const overdue  = a.status === 'VENCIDO';
                           const returned = a.status === 'DEVUELTO';
                           const rowBg    = returned ? '#0a1a0a' : overdue ? '#1a0a0a' : idx % 2 === 0 ? C.bgRow : C.bgRowAlt;
+                          const hoursUsed = a.status === 'ASIGNADO' && a.started_at
+                            ? Math.round((Date.now() - new Date(a.started_at).getTime()) / 3600000 * 10) / 10
+                            : (a.hours_assigned || 0);
                           return (
                             <tr key={a.id} style={{ background: rowBg }}>
                               <td style={td}>
@@ -1660,13 +2086,22 @@ export default function WarehouseCommandCenter({ apiBase = '/api/v1', token = ''
                                 )}
                               </td>
                               <td style={{ ...td, fontFamily: 'monospace', fontSize: 11, color: returned ? C.textDim : C.accentO }}>{a.tool_code}</td>
-                              <td style={{ ...td, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              <td style={{ ...td, fontFamily: 'monospace', fontSize: 10, color: returned ? C.textMut : C.accentY }}>
+                                {returned
+                                  ? <span style={{ textDecoration: 'line-through', opacity: 0.45 }}>{a.asg_token}</span>
+                                  : a.asg_token
+                                }
+                              </td>
+                              <td style={{ ...td, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                 {a.tool_name}{a.notes ? ` · ${a.notes}` : ''}
                               </td>
                               <td style={{ ...td, fontSize: 11, color: C.textDim }}>{a.project}</td>
                               <td style={{ ...td, fontSize: 11 }}>{fmtDate(a.assigned_date)}</td>
                               <td style={{ ...td, fontSize: 11, color: overdue ? C.accentR : C.textMut, fontWeight: overdue ? 700 : 400 }}>
                                 {fmtDate(a.expected_return)}{overdue ? ' ⚠' : ''}
+                              </td>
+                              <td style={{ ...td, textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, color: returned ? C.textMut : C.accentY }}>
+                                {a.status === 'ASIGNADO' ? `${hoursUsed}h ⏱` : a.hours_assigned ? `${a.hours_assigned}h` : '-'}
                               </td>
                               <td style={{ ...td, fontSize: 11 }}>{a.condition_out}</td>
                               <td style={td}>
@@ -1676,7 +2111,10 @@ export default function WarehouseCommandCenter({ apiBase = '/api/v1', token = ''
                               </td>
                               <td style={td}>
                                 {returned ? (
-                                  <span style={{ fontSize: 11, color: C.accentG }}>✓ {a.condition_in} · {a.actual_return}</span>
+                                  <div style={{ fontSize: 11, color: C.accentG }}>
+                                    <div>✓ {a.condition_in}</div>
+                                    <div style={{ color: C.textMut }}>{a.actual_return}</div>
+                                  </div>
                                 ) : (
                                   <button style={{ ...btn('success'), fontSize: 10, padding: '3px 8px' }}
                                     onClick={() => doReturn([a.id], returnCondition['_global'] || 'BUENO')}>
@@ -2294,8 +2732,15 @@ export default function WarehouseCommandCenter({ apiBase = '/api/v1', token = ''
                     <td style={{ ...td, fontFamily: 'monospace', fontSize: 11, color: C.accent }}>{p.purchase_ref}</td>
                     <td style={{ ...td, overflow: 'hidden' }}>
                       <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12 }} title={p.product_name}>{p.product_name}</div>
+                      {/* Código estructurado del almacén CTA-NAT-RUB-SEQQ-TK */}
+                      {(p.catalog_code || catalogMatch?.code) && (
+                        <div style={{ fontFamily: 'monospace', fontSize: 9, color: C.accentY, fontWeight: 700 }}>
+                          {p.catalog_code || catalogMatch?.code}
+                          {p.catalog_match || catalogMatch ? ' ✓' : ' ⚠provisional'}
+                        </div>
+                      )}
                       {catalogMatch && (
-                        <div style={{ fontSize: 9, color: C.accentG }}>✓ {catalogMatch.name}</div>
+                        <div style={{ fontSize: 9, color: C.accentG }}>{catalogMatch.name}</div>
                       )}
                     </td>
                     <td style={td}>

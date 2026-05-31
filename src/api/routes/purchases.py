@@ -62,9 +62,11 @@ COST_CENTER_LIBRARY = {
 }
 
 PCGE_RULE_LIBRARY = [
+    # ── SERVICIOS / GASTOS CORRIENTES (no ingresan al almacén) ──────────────
     {
         "account_code": "636101",
         "account_name": "Servicios basicos",
+        "is_inventory": False,
         "keywords": [
             "agua", "alcantarillado", "sedapal", "luz", "electricidad", "energia", "energia activa",
             "hidrandina", "enel", "luz del sur", "gas", "internet", "telefono", "telefonia",
@@ -79,6 +81,7 @@ PCGE_RULE_LIBRARY = [
     {
         "account_code": "632101",
         "account_name": "Asesoria y consultoria",
+        "is_inventory": False,
         "keywords": ["asesoria", "consultoria", "consultor", "legal", "contable", "auditoria", "honorario", "profesional"],
         "default_cost_center": "LIM-ADM",
         "tax_treatment": "Gasto deducible sujeto a causalidad, fehaciencia, sustento documental y bancarizacion cuando corresponda.",
@@ -89,6 +92,7 @@ PCGE_RULE_LIBRARY = [
     {
         "account_code": "624101",
         "account_name": "Transportes y fletes",
+        "is_inventory": False,
         "keywords": ["flete", "transporte", "courier", "delivery", "traslado", "carga", "envio"],
         "default_cost_center": "LOG-ALM",
         "tax_treatment": "Evaluar detraccion si corresponde por servicio de transporte de bienes y validar sustento.",
@@ -98,7 +102,8 @@ PCGE_RULE_LIBRARY = [
     },
     {
         "account_code": "634101",
-        "account_name": "Mantenimiento y reparaciones",
+        "account_name": "Mantenimiento y reparaciones (servicio)",
+        "is_inventory": False,
         "keywords": ["mantenimiento", "reparacion", "soporte tecnico", "servicio tecnico"],
         "default_cost_center": "LIM-ADM",
         "tax_treatment": "Gasto deducible si esta vinculado con bienes o actividades del negocio.",
@@ -109,7 +114,8 @@ PCGE_RULE_LIBRARY = [
     {
         "account_code": "635101",
         "account_name": "Alquileres",
-        "keywords": ["alquiler", "arrendamiento", "renta", "local", "oficina"],
+        "is_inventory": False,
+        "keywords": ["alquiler", "arrendamiento", "renta", "local"],
         "default_cost_center": "LIM-ADM",
         "tax_treatment": "Revisar contrato, comprobante, detraccion si corresponde y fehaciencia del uso del inmueble.",
         "deductibility": "DEDUCIBLE",
@@ -119,44 +125,164 @@ PCGE_RULE_LIBRARY = [
     {
         "account_code": "637101",
         "account_name": "Publicidad y marketing",
-        "keywords": ["publicidad", "marketing", "anuncio", "campaña", "redes", "diseño"],
+        "is_inventory": False,
+        "keywords": ["publicidad", "marketing", "anuncio", "campaña", "redes", "diseño grafico"],
         "default_cost_center": "LIM-COM",
         "tax_treatment": "Deducible si acredita necesidad comercial, causalidad, fehaciencia y sustento documental.",
         "deductibility": "DEDUCIBLE",
         "igv_credit": "SI",
         "requires_support": False,
     },
+    # ── INVENTARIO — BIENES FÍSICOS QUE INGRESAN AL ALMACÉN ─────────────────
     {
-        "account_code": "656101",
-        "account_name": "Suministros diversos",
-        "keywords": ["utiles", "suministro", "material", "limpieza", "oficina", "papel", "toner", "tinta"],
-        "default_cost_center": "LIM-ADM",
-        "tax_treatment": "Gasto operativo deducible si cumple causalidad y sustento.",
+        "account_code": "2011",
+        "account_name": "Mercaderias manufacturadas",
+        "is_inventory": True,
+        "item_class": "MERCADERIA",
+        "keywords": [
+            "mercaderia", "producto para venta", "articulo para reventa", "producto terminado para venta",
+            "stock para venta", "producto comercial", "articulo comercial"
+        ],
+        "default_cost_center": "LOG-ALM",
+        "tax_treatment": "Bien inventariable para reventa. Afecta kardex. IGV credito fiscal si cumple requisitos.",
         "deductibility": "DEDUCIBLE",
         "igv_credit": "SI",
         "requires_support": False,
     },
     {
-        "account_code": "336101",
-        "account_name": "Activo fijo - equipos diversos",
-        "keywords": ["laptop", "computadora", "impresora", "maquina", "equipo", "mobiliario", "activo", "vehiculo"],
+        "account_code": "2012",
+        "account_name": "Mercaderias no manufacturadas",
+        "is_inventory": True,
+        "item_class": "MERCADERIA",
+        "keywords": [
+            "commodity", "producto agricola para venta", "producto pesquero para venta",
+            "mineral para venta", "materia prima para reventa"
+        ],
+        "default_cost_center": "LOG-ALM",
+        "tax_treatment": "Bien inventariable no manufacturado para reventa. Afecta kardex.",
+        "deductibility": "DEDUCIBLE",
+        "igv_credit": "SI",
+        "requires_support": False,
+    },
+    {
+        "account_code": "2411",
+        "account_name": "Materias primas para productos manufacturados",
+        "is_inventory": True,
+        "item_class": "MATERIA_PRIMA",
+        "keywords": [
+            "cemento", "portland", "acero", "fierro corrugado", "varilla", "madera tornillo",
+            "triplay", "plywood", "ladrillo", "ceramica", "porcelanato", "pintura",
+            "concreto", "mortero", "yeso", "cal viva", "barniz", "laca",
+            "tela", "hilo", "cuero", "plastico resina", "caucho", "vidrio"
+        ],
+        "default_cost_center": "OPS-PROD",
+        "tax_treatment": "Materia prima para produccion. Afecta kardex. IGV credito fiscal si cumple requisitos.",
+        "deductibility": "DEDUCIBLE",
+        "igv_credit": "SI",
+        "requires_support": False,
+    },
+    {
+        "account_code": "2412",
+        "account_name": "Materias primas para productos no manufacturados",
+        "is_inventory": True,
+        "item_class": "MATERIA_PRIMA",
+        "keywords": [
+            "arena", "piedra chancada", "gravilla", "ripio", "hormigon", "agregado grueso",
+            "agregado fino", "mineral", "concentrado", "tierra", "arcilla"
+        ],
+        "default_cost_center": "OPS-PROD",
+        "tax_treatment": "Materia prima no manufacturada. Afecta kardex.",
+        "deductibility": "DEDUCIBLE",
+        "igv_credit": "SI",
+        "requires_support": False,
+    },
+    {
+        "account_code": "2522",
+        "account_name": "Suministros",
+        "is_inventory": True,
+        "item_class": "INSUMOS",
+        "keywords": [
+            "papel bond", "papel a4", "papel a3", "papel oficio", "toner", "cartucho tinta",
+            "utiles escritorio", "archivador", "folder", "cinta adhesiva", "masking tape",
+            "lapiz", "boligrafo", "engrapadora", "perforadora", "post it", "resma",
+            "jabon", "detergente", "lejia", "desinfectante", "papel higienico", "escoba",
+            "trapeador", "bolsa plastica", "guante de latex", "alcohol gel",
+            "gasolina", "diesel", "petroleo", "combustible", "aceite motor", "lubricante",
+            "grasa industrial", "gnv", "gas natural vehicular",
+            "casco seguridad", "guante cuero", "guante nitrilo", "lentes seguridad",
+            "zapatos seguridad", "chaleco reflectivo", "tapones oidos", "mascarilla n95",
+            "arnes seguridad", "epp", "equipos proteccion personal",
+            "suministro", "insumo", "consumible"
+        ],
+        "default_cost_center": "LOG-ALM",
+        "tax_treatment": "Suministro inventariable. Afecta kardex. IGV credito fiscal si cumple requisitos.",
+        "deductibility": "DEDUCIBLE",
+        "igv_credit": "SI",
+        "requires_support": False,
+    },
+    {
+        "account_code": "2523",
+        "account_name": "Repuestos",
+        "is_inventory": True,
+        "item_class": "INSUMOS",
+        "keywords": [
+            "repuesto", "pieza de recambio", "refaccion", "spare part", "broca", "cuchilla",
+            "filtro aceite", "filtro aire", "correa", "faja", "rodamiento", "cojinete",
+            "banda transportadora", "valvula", "sello mecanico", "empaque", "retenedor"
+        ],
+        "default_cost_center": "LOG-ALM",
+        "tax_treatment": "Repuesto inventariable. Afecta kardex. Evaluar si supera politica de capitalizacion.",
+        "deductibility": "DEDUCIBLE",
+        "igv_credit": "SI",
+        "requires_support": False,
+    },
+    {
+        "account_code": "3336",
+        "account_name": "Equipos diversos (activo fijo)",
+        "is_inventory": True,
+        "item_class": "ACTIVO_FIJO",
+        "keywords": [
+            "laptop", "computadora", "pc escritorio", "monitor", "impresora laser",
+            "escaner", "proyector", "servidor", "switch", "router", "ups",
+            "telefono ip", "tablet", "celular corporativo",
+            "refrigeradora", "aire acondicionado", "grupo electrogeno"
+        ],
         "default_cost_center": "LIM-ADM",
-        "tax_treatment": "No enviar directo a gasto si supera politica de capitalizacion; activar y depreciar segun politica contable.",
+        "tax_treatment": "Activo fijo. Capitalizar si supera politica. Depreciar segun vida util. IGV sujeto a revision.",
         "deductibility": "REVISION",
         "igv_credit": "REVISION",
         "requires_support": True,
     },
     {
-        "account_code": "601101",
-        "account_name": "Compras de mercaderias",
-        "keywords": ["mercaderia", "producto para venta", "inventario", "stock"],
-        "default_cost_center": "LOG-ALM",
-        "tax_treatment": "Afecta inventario/kardex y costo de ventas segun politica de inventarios.",
-        "deductibility": "DEDUCIBLE",
+        "account_code": "3337",
+        "account_name": "Herramientas y utensilios (activo fijo)",
+        "is_inventory": True,
+        "item_class": "HERRAMIENTAS",
+        "keywords": [
+            "herramienta", "taladro", "amoladora", "esmeril", "soldadora", "nivel laser",
+            "compresor", "pistola pintura", "llave torquimetro", "destornillador set",
+            "mezcladora concreto", "vibrador concreto", "sierra circular",
+            "martillo neumatico", "jackhammer", "andamio", "escalera metal"
+        ],
+        "default_cost_center": "OPS-PROD",
+        "tax_treatment": "Herramienta/utensilio de reemplazo. Evaluar capitalizacion o gasto segun politica.",
+        "deductibility": "REVISION",
         "igv_credit": "SI",
-        "requires_support": False,
+        "requires_support": True,
     },
 ]
+
+# Mapa rapido cuenta inventario → clase de articulo (para auto-crear en almacen)
+INVENTARIO_ACCOUNT_CLASS: dict[str, str] = {
+    "20": "MERCADERIA",
+    "21": "MERCADERIA",
+    "22": "MERCADERIA",
+    "24": "MATERIA_PRIMA",
+    "25": "INSUMOS",
+    "26": "INSUMOS",
+    "33": "ACTIVO_FIJO",
+    "34": "ACTIVO_FIJO",
+}
 
 # ─── OSINERGMIN: Electricidad ────────────────────────────────────────────────
 ELECTRIC_REGULATED_RULES = [
@@ -415,6 +541,8 @@ def _classify_local(description: str, supplier_name: str = "", fallback_cost_cen
             "igv_credit": "NO",
             "requires_support": False,
             "line_type": "ROUNDING",
+            "is_inventory": False,
+            "item_class": None,
             "ai_reason": "Linea tecnica de redondeo/ajuste monetario.",
             "ai_confidence": 0.99,
         }
@@ -428,6 +556,8 @@ def _classify_local(description: str, supplier_name: str = "", fallback_cost_cen
             "igv_credit": "NO",
             "requires_support": False,
             "line_type": "PRIOR_BALANCE",
+            "is_inventory": False,
+            "item_class": None,
             "ai_reason": "La linea corresponde a deuda o saldo anterior incluido en el recibo.",
             "ai_confidence": 0.96,
         }
@@ -441,6 +571,8 @@ def _classify_local(description: str, supplier_name: str = "", fallback_cost_cen
             "igv_credit": "NO",
             "requires_support": False,
             "line_type": "ADVANCE_PAYMENT",
+            "is_inventory": False,
+            "item_class": None,
             "ai_reason": "La linea corresponde a abono, credito o pago a cuenta.",
             "ai_confidence": 0.96,
         }
@@ -454,6 +586,8 @@ def _classify_local(description: str, supplier_name: str = "", fallback_cost_cen
             "igv_credit": "NO",
             "requires_support": True,
             "line_type": "LATE_FEE",
+            "is_inventory": False,
+            "item_class": None,
             "ai_reason": "La linea corresponde a mora, recargo o penalidad.",
             "ai_confidence": 0.86,
         }
@@ -462,6 +596,7 @@ def _classify_local(description: str, supplier_name: str = "", fallback_cost_cen
     for rule in PCGE_RULE_LIBRARY:
         if any(keyword.lower() in text for keyword in rule["keywords"]):
             cc = rule.get("default_cost_center") or fallback_cost_center
+            is_inv = bool(rule.get("is_inventory", False))
             return {
                 "account_code": rule["account_code"],
                 "account_name": rule["account_name"],
@@ -470,7 +605,9 @@ def _classify_local(description: str, supplier_name: str = "", fallback_cost_cen
                 "deductibility": rule["deductibility"],
                 "igv_credit": rule["igv_credit"],
                 "requires_support": bool(rule.get("requires_support", False)),
-                "line_type": "EXPENSE_OR_ASSET",
+                "line_type": "INVENTORY_PURCHASE" if is_inv else "EXPENSE_OR_ASSET",
+                "is_inventory": is_inv,
+                "item_class": rule.get("item_class"),
                 "ai_reason": f"Clasificado por regla PCGE/local: {rule['account_name']}.",
                 "ai_confidence": 0.93,
             }
@@ -483,6 +620,8 @@ def _classify_local(description: str, supplier_name: str = "", fallback_cost_cen
         "igv_credit": "REVISION",
         "requires_support": True,
         "line_type": "EXPENSE_OR_ASSET",
+        "is_inventory": False,
+        "item_class": None,
         "ai_reason": "No se identifico una regla contable confiable.",
         "ai_confidence": 0.55,
     }
@@ -520,6 +659,60 @@ def _json_schema_instruction() -> str:
 Devuelve SOLO JSON valido, sin markdown, sin explicaciones fuera del JSON.
 
 Eres CONTA_PRO Vision Accounting Engine, motor contable, tributario, legal-documentario y de auditoria para un ERP peruano empresarial.
+
+══════════════════════════════════════════════════════════════════
+DETECCIÓN OBLIGATORIA: INVENTARIO vs GASTO/SERVICIO
+══════════════════════════════════════════════════════════════════
+REGLA FUNDAMENTAL: Determina si cada ítem es un BIEN FÍSICO TANGIBLE o un SERVICIO.
+
+BIEN FÍSICO TANGIBLE (ingresa al almacén → account_code = cuenta inventario 2xx o 3xx):
+  ┌──────────┬─────────────────────────────────────┬──────────────────────────────────────────────────────┐
+  │ Cuenta   │ Nombre                              │ Cuando usar                                          │
+  ├──────────┼─────────────────────────────────────┼──────────────────────────────────────────────────────┤
+  │ 2011     │ Mercaderías manufact.               │ Productos para reventa manufacturados                │
+  │ 2012     │ Mercaderías no manufact.            │ Commodities, productos no manufact. para reventa     │
+  │ 2411     │ Materias primas manufact.           │ Cemento, acero, fierro, madera, ladrillo, pintura    │
+  │ 2412     │ Materias primas no manufact.        │ Arena, piedra chancada, gravilla, mineral, arcilla   │
+  │ 2521     │ Materiales auxiliares               │ Materiales auxiliares de produccion                  │
+  │ 2522     │ Suministros                         │ Papel bond, toner, utiles, EPP, combustible, aceite  │
+  │          │                                     │ jabon, detergente, lejia, papel higienico, limpieza  │
+  │ 2523     │ Repuestos                           │ Repuestos de maquinaria, brocas, filtros, correas    │
+  │ 3334     │ Unidades de transporte              │ Vehiculos (activo fijo)                              │
+  │ 3336     │ Equipos diversos                    │ Laptops, PCs, servidores, equipos electronicos       │
+  │ 3337     │ Herramientas y utensilios           │ Herramientas, taladros, amoladoras, andamios         │
+  └──────────┴─────────────────────────────────────┴──────────────────────────────────────────────────────┘
+  → is_inventory = true
+  → line_type = "INVENTORY_PURCHASE"
+  → El account_code del item DEBE ser la cuenta de inventario (2xx o 3xx), NO la cuenta de gasto (6xx)
+
+SERVICIO / GASTO CORRIENTE (NO ingresa al almacén → account_code = cuenta gasto 6xx):
+  - 636xxx: servicios publicos (luz, agua, gas, internet, telefonia)
+  - 632xxx: asesorias, consultorias, honorarios profesionales
+  - 624xxx: fletes y servicios de transporte
+  - 634xxx: servicios de mantenimiento y reparacion
+  - 635xxx: alquileres de local u oficina
+  - 637xxx: publicidad y marketing
+  - 659xxx: otros gastos de gestion
+  → is_inventory = false
+  → line_type = "EXPENSE_OR_ASSET"
+
+EJEMPLOS CRITICOS:
+  "Papel Bond A4 x 500 hojas" → cuenta 2522 (INVENTARIO, es bien fisico)
+  "Gasolina 84 octanos 20 gal" → cuenta 2522 (INVENTARIO, es bien fisico)
+  "Casco de seguridad x 5 unds" → cuenta 2522 (INVENTARIO, EPP fisico)
+  "Cemento Portland 42.5kg x 50 bolsas" → cuenta 2411 (INVENTARIO, materia prima)
+  "Laptop HP 15 i5" → cuenta 3336 (INVENTARIO, activo fijo)
+  "Servicio de internet mensual" → cuenta 636101 (SERVICIO, no ingresa almacen)
+  "Honorarios contables" → cuenta 632101 (SERVICIO)
+  "Alquiler local comercial" → cuenta 635101 (SERVICIO)
+  "Mantenimiento correctivo maquina" → cuenta 634101 (SERVICIO)
+  "Flete de transporte" → cuenta 624101 (SERVICIO)
+
+Si el comprobante tiene items MIXTOS (algunos bienes fisicos, algunos servicios), clasifica cada uno independientemente.
+
+CUENTA POR PAGAR PARA COMPRAS DE INVENTARIO: siempre 4212 (igual que servicios).
+IGV de compras de inventario: siempre 40111 si cumple credito fiscal.
+══════════════════════════════════════════════════════════════════
 
 REGLA PRINCIPAL INNEGOCIABLE:
 El TOTAL A PAGAR impreso en el comprobante manda. No modifiques el total para hacerlo coincidir con tus calculos. Si la suma de conceptos no coincide, crea una linea de ajuste por redondeo/diferencia de lectura y marca observacion.
@@ -582,10 +775,12 @@ FORMATO JSON OBLIGATORIO:
       "taxable": true,
       "igv_amount": "0.00",
       "total_line": "0.00",
-      "line_type": "EXPENSE_OR_ASSET|PRIOR_BALANCE|ADVANCE_PAYMENT|LATE_FEE|ROUNDING",
+      "line_type": "INVENTORY_PURCHASE|EXPENSE_OR_ASSET|PRIOR_BALANCE|ADVANCE_PAYMENT|LATE_FEE|ROUNDING",
       "account_code": "",
       "account_name": "",
       "cost_center": "",
+      "is_inventory": false,
+      "item_class": "MERCADERIA|MATERIA_PRIMA|INSUMOS|HERRAMIENTAS|ACTIVO_FIJO|null",
       "tax_treatment": "",
       "deductibility": "DEDUCIBLE|NO_DEDUCIBLE|OBSERVADO|REVISION",
       "igv_credit": "SI|NO|REVISION",
@@ -904,6 +1099,20 @@ def _normalize_ai_response(data: dict[str, Any]) -> dict[str, Any]:
         if kind == "ROUNDING" and abs(line_subtotal) <= AUTO_ROUNDING_TOLERANCE:
             raw["requires_support"] = False
 
+        # Detectar si es inventario: la IA puede indicarlo con is_inventory=true o con
+        # account_code que comienza por 2x o 3x, o por line_type INVENTORY_PURCHASE.
+        ai_is_inventory = bool(raw.get("is_inventory", False))
+        ai_item_class = _norm_text(raw.get("item_class")) or None
+        code_prefix = account_code[:2] if len(account_code) >= 2 else ""
+        is_inventory = (
+            ai_is_inventory
+            or kind == "INVENTORY_PURCHASE"
+            or code_prefix in INVENTARIO_ACCOUNT_CLASS
+            or local.get("is_inventory", False)
+        )
+        item_class = ai_item_class or local.get("item_class") or INVENTARIO_ACCOUNT_CLASS.get(code_prefix)
+        resolved_kind = kind if kind != "NORMAL" else ("INVENTORY_PURCHASE" if is_inventory else "EXPENSE_OR_ASSET")
+
         item = {
             "code": _norm_text(raw.get("code")),
             "description": description or account_name,
@@ -914,10 +1123,12 @@ def _normalize_ai_response(data: dict[str, Any]) -> dict[str, Any]:
             "taxable": bool(raw.get("taxable", True)),
             "igv_amount": _money_str(igv_amount),
             "total_line": _money_str(total_line),
-            "line_type": kind if kind != "NORMAL" else "EXPENSE_OR_ASSET",
+            "line_type": resolved_kind,
             "account_code": account_code,
             "account_name": account_name,
             "cost_center": cost_center,
+            "is_inventory": is_inventory,
+            "item_class": item_class,
             "tax_treatment": _norm_text(raw.get("tax_treatment")) or local["tax_treatment"],
             "deductibility": _norm_text(raw.get("deductibility")) or local["deductibility"],
             "igv_credit": _norm_text(raw.get("igv_credit")) or local["igv_credit"],
@@ -929,7 +1140,7 @@ def _normalize_ai_response(data: dict[str, Any]) -> dict[str, Any]:
         }
         items.append(item)
 
-    subtotal = _money(data.get("printed_subtotal") or data.get("subtotal") or sum(_money(item["line_subtotal"]) for item in items if item.get("line_type") == "EXPENSE_OR_ASSET"))
+    subtotal = _money(data.get("printed_subtotal") or data.get("subtotal") or sum(_money(item["line_subtotal"]) for item in items if item.get("line_type") in {"EXPENSE_OR_ASSET", "INVENTORY_PURCHASE"}))
     igv = _money(data.get("printed_igv") or data.get("igv") or sum(_money(item.get("igv_amount")) for item in items))
     total_read = _money(data.get("printed_total") or data.get("total_read_from_document") or data.get("total") or subtotal + igv)
     total = total_read
@@ -946,6 +1157,62 @@ def _normalize_ai_response(data: dict[str, Any]) -> dict[str, Any]:
         ocr_warnings,
         reconciliation_notes,
     )
+
+    # ── LOOKUP CATÁLOGO ALMACÉN ──────────────────────────────────────────────
+    # Para cada ítem de inventario, buscar en el catálogo por keywords.
+    # Si existe → asignar catalog_code estructurado (CTA-NAT-RUB-SEQQ-TK).
+    # Si no existe → generar código provisional con la misma estructura.
+    # Multi-empresa: catalog_code es universal; el producto en BD es por empresa.
+    from src.domain.item_catalog import (
+        lookup as catalog_lookup,
+        infer_nat_from_description,
+        infer_tk_from_description,
+        build_structured_code,
+        item_class_from_nat,
+    )
+    for item in items:
+        if not item.get("is_inventory"):
+            continue
+        desc = _norm_text(item.get("description"))
+        acc  = _norm_text(item.get("account_code"))
+        match = catalog_lookup(desc, acc)
+        if match:
+            item["catalog_code"]  = match["code"]
+            item["catalog_name"]  = match["name"]
+            item["catalog_unit"]  = match["unit"]
+            item["gasto_account"] = match["gasto"]
+            item["gasto_name"]    = match["gasto_name"]
+            item["catalog_nat"]   = match["nat"]
+            item["catalog_rub"]   = match["rub"]
+            item["catalog_tk"]    = match["tk"]
+            # Usar cuenta CTA del catálogo si no hay account_code o es genérico
+            if not acc or acc in {"659101", "2011"} and match["cta"] != acc:
+                item["account_code"] = match["cta"]
+                item["account_name"] = f"Inventario - {match['name']}"
+            # Actualizar item_class desde catálogo
+            item["item_class"] = item_class_from_nat(match["nat"])
+            item["catalog_match"] = True
+        else:
+            # No está en catálogo → generar código estructurado con misma estructura
+            cta = acc[:3] if len(acc) >= 3 else "252"
+            nat = infer_nat_from_description(desc, cta)
+            tk  = infer_tk_from_description(desc, nat)
+            # SEQQ 9999 = pendiente de asignar secuencia real en inventario
+            provisional_code = build_structured_code(cta, nat, "GE", 9999, tk)
+            item["catalog_code"]   = provisional_code
+            item["catalog_name"]   = desc
+            item["catalog_unit"]   = _norm_text(item.get("unit")) or "UND"
+            item["gasto_account"]  = ""
+            item["gasto_name"]     = ""
+            item["catalog_nat"]    = nat
+            item["catalog_rub"]    = "GE"
+            item["catalog_tk"]     = tk
+            item["item_class"]     = item_class_from_nat(nat)
+            item["catalog_match"]  = False
+            accounting_warnings.append(
+                f"Ítem '{desc[:60]}' no encontrado en catálogo → código provisional {provisional_code}. "
+                "Almacén creará el artículo automáticamente con esta estructura."
+            )
 
     if not items and subtotal > 0:
         local = _classify_local(_norm_text(data.get("supplier_name")) or "gasto por clasificar", supplier_name, fallback_cc)

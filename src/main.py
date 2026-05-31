@@ -37,8 +37,46 @@ from src.infrastructure.events.dispatcher import get_dispatcher, register_defaul
 from src.infrastructure.observability.tracing import configure_tracing
 
 
+async def _apply_schema_patches() -> None:
+    """Aplica columnas faltantes sin requerir migraciones Alembic completas."""
+    from src.infrastructure.db.session import AsyncSessionLocal
+    patches = [
+        # kardex_movements: columnas añadidas al modelo pero aún no en BD
+        "ALTER TABLE kardex_movements ADD COLUMN IF NOT EXISTS area VARCHAR(50)",
+        "ALTER TABLE kardex_movements ADD COLUMN IF NOT EXISTS validated_by VARCHAR(100)",
+        "ALTER TABLE kardex_movements ADD COLUMN IF NOT EXISTS notes TEXT",
+        # warehouses: columnas adicionales del modelo
+        "ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS warehouse_type VARCHAR(30) DEFAULT 'GENERAL'",
+        "ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS location VARCHAR(200)",
+        "ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS capacity NUMERIC(18,6)",
+        # products: columnas de catalogación
+        "ALTER TABLE products ADD COLUMN IF NOT EXISTS item_class VARCHAR(30) DEFAULT 'MERCADERIA'",
+        "ALTER TABLE products ADD COLUMN IF NOT EXISTS token_type VARCHAR(20) DEFAULT 'PERMANENTE'",
+        "ALTER TABLE products ADD COLUMN IF NOT EXISTS token_code VARCHAR(50)",
+        "ALTER TABLE products ADD COLUMN IF NOT EXISTS area VARCHAR(50) DEFAULT 'ALMACEN'",
+        "ALTER TABLE products ADD COLUMN IF NOT EXISTS location VARCHAR(200)",
+        "ALTER TABLE products ADD COLUMN IF NOT EXISTS min_stock NUMERIC(18,6) DEFAULT 0",
+        "ALTER TABLE products ADD COLUMN IF NOT EXISTS max_stock NUMERIC(18,6) DEFAULT 0",
+        "ALTER TABLE products ADD COLUMN IF NOT EXISTS brand VARCHAR(100)",
+        "ALTER TABLE products ADD COLUMN IF NOT EXISTS specs TEXT",
+        "ALTER TABLE products ADD COLUMN IF NOT EXISTS detail_description TEXT",
+    ]
+    from sqlalchemy import text
+    try:
+        async with AsyncSessionLocal() as session:
+            for sql in patches:
+                try:
+                    await session.execute(text(sql))
+                except Exception:
+                    pass  # columna ya existe u otro error no crítico
+            await session.commit()
+    except Exception:
+        pass  # BD no disponible en arranque — ignorar
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    await _apply_schema_patches()
     dispatcher = get_dispatcher()
     register_default_handlers(dispatcher)
     await dispatcher.start()

@@ -37,6 +37,7 @@ class InventoryRepository:
         brand: str | None = None,
         specs: str | None = None,
         detail_description: str | None = None,
+        company_id: str | None = None,  # reservado para multi-empresa (campo futuro)
     ) -> Product:
         product = Product(
             tenant_id=tenant_id,
@@ -126,7 +127,10 @@ class InventoryRepository:
         )
         return list(result.scalars().all())
 
-    async def count_products_by_class_area(self, tenant_id: str, item_class: str, area: str) -> int:
+    async def count_products_by_class_area(
+        self, tenant_id: str, item_class: str, area: str,
+        company_id: str | None = None,   # reservado para futuro campo en modelo
+    ) -> int:
         result = await self.session.execute(
             select(func.count(Product.id)).where(
                 Product.tenant_id == tenant_id,
@@ -135,6 +139,20 @@ class InventoryRepository:
             )
         )
         return result.scalar_one() or 0
+
+    async def find_product_by_token_code(
+        self, tenant_id: str, token_code: str,
+        company_id: str | None = None,   # reservado para multi-empresa futura
+    ) -> "Product | None":
+        """Busca un producto por su código estructurado del catálogo."""
+        result = await self.session.execute(
+            select(Product).where(
+                Product.tenant_id == tenant_id,
+                Product.token_code == token_code,
+                Product.is_active.is_(True),
+            )
+        )
+        return result.scalar_one_or_none()
 
     # =========================================================================
     # WAREHOUSES
