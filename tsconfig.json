@@ -21,5 +21,13 @@
       "@/*": ["src/*"]
     }
   },
-  "include": ["frontend/src", "src/features", "src/hooks", "src/components"]
+  "include": [
+    "frontend/src",
+    "src/features",
+    "src/hooks",
+    "src/components",
+    "src/config",
+    "src/styles"
+  ],
+  "exclude": ["node_modules", "dist", "src/api", "src/application", "src/domain", "src/infrastructure"]
 }

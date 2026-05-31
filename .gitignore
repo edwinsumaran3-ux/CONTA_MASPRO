@@ -88,3 +88,4 @@ api.stdout.log
 
 # ── Docker local override ────────────────────────────────────
 docker-compose.override.yml
+dist/
