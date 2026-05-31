@@ -1,295 +1,562 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  Title,
-  Tooltip,
-  Legend,
-} from 'chart.js';
-import { Bar } from 'react-chartjs-2';
+/**
+ * CXC / CXP — Cuentas por Cobrar y por Pagar
+ * Datos reales: GET /api/v1/reports/accounts-receivable/aging
+ *               GET /api/v1/reports/accounts-payable/aging
+ * PCGE: 1211 / 1212 (CXC) · 4211 / 4212 (CXP)
+ */
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
-ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
-
-const chartOptions = {
-  responsive: true,
-  maintainAspectRatio: false,
-  plugins: {
-    legend: { position: 'top' as const },
-    title: { display: false },
-  },
-  scales: {
-    y: {
-      ticks: {
-        callback: (value: unknown) => `S/ ${value}`,
-      },
-    },
-  },
+/* ─── Paleta azul marino ─── */
+const C = {
+  bg:      '#050d1a',
+  bgCard:  '#0b1a30',
+  bgRow:   '#0d1f38',
+  bgHover: '#122647',
+  border:  '#1e3a5f',
+  text:    '#e8f0fe',
+  textMut: '#7da3c4',
+  textDim: '#4d7a9e',
+  accent:  '#60a5fa',
+  green:   '#22c55e',
+  red:     '#ef4444',
+  yellow:  '#f59e0b',
+  purple:  '#a855f7',
+  orange:  '#f97316',
+  header:  '#030810',
 };
 
-const API_BASE = '/api/v1';
+const API_BASE  = '/api/v1';
 const TENANT_ID = '11111111-1111-1111-1111-111111111111';
 
-type FinancialPack = {
-  period?: string;
-  income_statement?: {
-    revenue?: string;
-    cost?: string;
-    expenses?: string;
-    gross_profit?: string;
-    operating_profit?: string;
-  };
-  balance_sheet?: {
-    assets?: string;
-    liabilities?: string;
-    equity?: string;
-    check?: string;
-  };
-  cash_flow?: {
-    opening_cash?: string;
-    net_cash_movement?: string;
-    ending_cash?: string;
-  };
-  ratios?: {
-    operating_margin?: string;
-    debt_to_equity?: string;
-    financial_leverage?: string;
-  };
-  comparison?: {
-    balance_sheet?: {
-      period?: string;
-      assets?: string;
-      liabilities?: string;
-      equity?: string;
-      check?: string;
-    };
-    income_statement?: {
-      period?: string;
-      revenue?: string;
-      cost?: string;
-      expenses?: string;
-      gross_profit?: string;
-      operating_profit?: string;
-    };
-    cash_flow?: {
-      period?: string;
-      opening_cash?: string;
-      net_cash_movement?: string;
-      ending_cash?: string;
-    };
-  };
+/* ─── Tipos ─── */
+interface AgingDocument {
+  partner_ruc?: string;
+  partner_name?: string;
+  document_type?: string;
+  document_series?: string;
+  document_number?: string;
+  issue_date?: string;
+  due_date?: string;
+  days_overdue: number;
+  bucket: string;
+  balance_amount: string;
+  account_code?: string;
+}
+
+interface AgingBuckets {
+  current: string;
+  '1_30':  string;
+  '31_60': string;
+  '61_90': string;
+  '90_plus': string;
+}
+
+interface AgingReport {
+  direction: 'AR' | 'AP';
+  as_of: string;
+  buckets: AgingBuckets;
+  documents: AgingDocument[];
+  total?: string;
+}
+
+/* ─── Helpers ─── */
+const toN = (v: string | number | undefined | null) => {
+  const n = parseFloat(String(v ?? '0'));
+  return isFinite(n) ? n : 0;
+};
+const fmt = (n: number) =>
+  `S/ ${n.toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const fmtDate = (s?: string) => {
+  if (!s) return '—';
+  try { return new Date(s).toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit', year: 'numeric' }); }
+  catch { return s; }
 };
 
-const parseAmount = (value?: string) => {
-  const parsed = Number.parseFloat(value ?? '0');
-  return Number.isFinite(parsed) ? parsed : 0;
-};
+/* ─── PCGE relevante para CXC/CXP ─── */
+const PCGE_CXCXP = [
+  { code: '1211', name: 'Facturas por cobrar — terceros',   tipo: 'CXC', color: C.green  },
+  { code: '1212', name: 'Letras por cobrar — terceros',     tipo: 'CXC', color: C.green  },
+  { code: '1213', name: 'Honorarios por cobrar',            tipo: 'CXC', color: C.green  },
+  { code: '1611', name: 'Préstamos a terceros',             tipo: 'CXC', color: C.accent },
+  { code: '4211', name: 'Facturas por pagar — terceros',    tipo: 'CXP', color: C.red    },
+  { code: '4212', name: 'Letras por pagar — terceros',      tipo: 'CXP', color: C.red    },
+  { code: '4213', name: 'Honorarios por pagar',             tipo: 'CXP', color: C.orange },
+  { code: '4511', name: 'Instituciones financieras — CP',   tipo: 'CXP', color: C.red    },
+];
 
-const formatMoney = (value: number) => `S/ ${value.toLocaleString('es-PE', { maximumFractionDigits: 2 })}`;
+/* ─── Buckets config ─── */
+const BUCKETS: { key: keyof AgingBuckets; label: string; color: string }[] = [
+  { key: 'current', label: 'Al corriente', color: C.green  },
+  { key: '1_30',    label: '1–30 días',    color: C.yellow },
+  { key: '31_60',   label: '31–60 días',   color: C.orange },
+  { key: '61_90',   label: '61–90 días',   color: C.red    },
+  { key: '90_plus', label: '+90 días',     color: '#7f1d1d' },
+];
 
+/* ─── Barra horizontal ─── */
+const AgingBar = ({ buckets, total }: { buckets: AgingBuckets; total: number }) => (
+  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+    {BUCKETS.map(b => {
+      const val = toN(buckets[b.key]);
+      const pct = total > 0 ? (val / total) * 100 : 0;
+      return (
+        <div key={b.key}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+            <span style={{ fontSize: 11, color: C.textMut }}>{b.label}</span>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+              <span style={{ fontSize: 10, color: C.textDim }}>{pct.toFixed(1)}%</span>
+              <span style={{ fontSize: 11, fontWeight: 800, color: b.color, fontFamily: 'Consolas, monospace', minWidth: 90, textAlign: 'right' }}>
+                {fmt(val)}
+              </span>
+            </div>
+          </div>
+          <div style={{ height: 7, borderRadius: 3, background: C.border, overflow: 'hidden' }}>
+            <div style={{
+              height: '100%', width: `${pct}%`, background: b.color,
+              borderRadius: 3, transition: 'width 0.5s ease',
+              boxShadow: val > 0 ? `0 0 6px ${b.color}44` : 'none',
+            }} />
+          </div>
+        </div>
+      );
+    })}
+  </div>
+);
+
+/* ─── Componente principal ─── */
 export const FinancialDashboard = () => {
-  const [pack, setPack] = useState<FinancialPack | null>(null);
-  const [token, setToken] = useState<string>('');
-  const [message, setMessage] = useState<string>('Cargando reporte financiero...');
+  const [arData,    setArData]    = useState<AgingReport | null>(null);
+  const [apData,    setApData]    = useState<AgingReport | null>(null);
+  const [loading,   setLoading]   = useState(false);
+  const [message,   setMessage]   = useState('');
+  const [activeTab, setActiveTab] = useState<'cxc' | 'cxp' | 'pcge'>('cxc');
+  const [search,    setSearch]    = useState('');
 
-  const downloadBase64 = (filename: string, mimeType: string, base64Content: string) => {
-    const binary = atob(base64Content);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i += 1) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    const blob = new Blob([bytes], { type: mimeType });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = filename;
-    anchor.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const requestExport = async (format: 'xlsx' | 'pdf') => {
-    if (!token) {
-      setMessage('Token no disponible para exportacion.');
-      return;
-    }
-    const response = await fetch(
-      `${API_BASE}/reports/financial-pack/${format}?year=2026&month=5&compare_year=2025&compare_month=5`,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'X-Tenant-Id': TENANT_ID,
-        },
-      },
-    );
-    if (!response.ok) {
-      throw new Error(`No se pudo exportar ${format.toUpperCase()}`);
-    }
-    const payload = await response.json();
-    downloadBase64(payload.filename, payload.mime_type, payload.content_base64);
-    setMessage(`Exportacion ${format.toUpperCase()} completada.`);
-  };
-
-  useEffect(() => {
-    let active = true;
-
-    const bootstrap = async () => {
-      const tokenResponse = await fetch(`${API_BASE}/auth/dev-token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tenant_id: TENANT_ID, user_id: 'erp.operator', role: 'ADMIN' }),
-      });
-      if (!tokenResponse.ok) {
-        setMessage('No se pudo generar token de sesion.');
-        return;
-      }
-      const tokenPayload = await tokenResponse.json();
-      if (active) {
-        setToken(tokenPayload.access_token);
-      }
-
-      const response = await fetch(`${API_BASE}/reports/financial-pack?year=2026&month=5&compare_year=2025&compare_month=5`, {
-        headers: {
-          Authorization: `Bearer ${tokenPayload.access_token}`,
-          'X-Tenant-Id': TENANT_ID,
-        },
-      });
-      if (!response.ok) {
-        setMessage('No se pudo cargar financial pack.');
-        return;
-      }
-
-      const payload = (await response.json()) as FinancialPack;
-      if (active) {
-        setPack(payload);
-        setMessage('Reporte financiero actualizado.');
-      }
-    };
-
-    bootstrap().catch(() => {
-      if (active) {
-        setPack(null);
-        setMessage('Error cargando reporte financiero.');
-      }
+  /* ── Auth ── */
+  const getHeaders = useCallback(async () => {
+    const r = await fetch(`${API_BASE}/auth/dev-token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tenant_id: TENANT_ID, user_id: 'erp.operator', role: 'ADMIN' }),
     });
-
-    return () => {
-      active = false;
+    if (!r.ok) throw new Error('Token no disponible');
+    const p = await r.json();
+    return {
+      Authorization: `Bearer ${p.access_token}`,
+      'X-Tenant-Id': TENANT_ID,
+      'Content-Type': 'application/json',
     };
   }, []);
 
-  const dynamicData = useMemo(() => {
-    const revenue = parseAmount(pack?.income_statement?.revenue);
-    const cost = parseAmount(pack?.income_statement?.cost);
-    const expenses = parseAmount(pack?.income_statement?.expenses);
-    const operatingProfit = parseAmount(pack?.income_statement?.operating_profit);
-    const compRevenue = parseAmount(pack?.comparison?.income_statement?.revenue);
-    const compCost = parseAmount(pack?.comparison?.income_statement?.cost);
-    const compExpenses = parseAmount(pack?.comparison?.income_statement?.expenses);
-    const compOperatingProfit = parseAmount(pack?.comparison?.income_statement?.operating_profit);
+  /* ── Fetch aging ── */
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const hdrs = await getHeaders();
+      const [arRes, apRes] = await Promise.all([
+        fetch(`${API_BASE}/reports/accounts-receivable/aging`, { headers: hdrs }),
+        fetch(`${API_BASE}/reports/accounts-payable/aging`,   { headers: hdrs }),
+      ]);
+      if (arRes.ok) setArData(await arRes.json());
+      if (apRes.ok) setApData(await apRes.json());
+      setMessage(`Actualizado: ${new Date().toLocaleTimeString('es-PE')}`);
+    } catch {
+      setMessage('Backend no disponible — sin datos CXC/CXP.');
+    } finally {
+      setLoading(false);
+    }
+  }, [getHeaders]);
 
-    return {
-      labels: ['Periodo Actual', 'Periodo Comparado'],
-      datasets: [
-        {
-          label: 'Ingresos',
-          data: [revenue, compRevenue],
-          backgroundColor: '#0078d4',
-          borderRadius: 4,
-        },
-        {
-          label: 'Costos',
-          data: [cost, compCost],
-          backgroundColor: '#6B7280',
-          borderRadius: 4,
-        },
-        {
-          label: 'Egresos',
-          data: [expenses, compExpenses],
-          backgroundColor: '#8db8e7',
-          borderRadius: 4,
-        },
-        {
-          label: 'Utilidad Operativa',
-          data: [operatingProfit, compOperatingProfit],
-          backgroundColor: '#16a34a',
-          borderRadius: 4,
-        },
-      ],
-    };
-  }, [pack]);
+  useEffect(() => { loadData(); }, [loadData]);
 
-  const leverage = parseAmount(pack?.ratios?.financial_leverage);
-  const margin = parseAmount(pack?.ratios?.operating_margin);
-  const debtToEquity = parseAmount(pack?.ratios?.debt_to_equity);
+  /* ── Totales ── */
+  const arTotal = useMemo(() =>
+    arData ? Object.values(arData.buckets).reduce((s, v) => s + toN(v), 0) : 0,
+    [arData]);
+  const apTotal = useMemo(() =>
+    apData ? Object.values(apData.buckets).reduce((s, v) => s + toN(v), 0) : 0,
+    [apData]);
 
-  const assets = parseAmount(pack?.balance_sheet?.assets);
-  const liabilities = parseAmount(pack?.balance_sheet?.liabilities);
-  const equity = parseAmount(pack?.balance_sheet?.equity);
-  const check = parseAmount(pack?.balance_sheet?.check);
-  const compAssets = parseAmount(pack?.comparison?.balance_sheet?.assets);
-  const compLiabilities = parseAmount(pack?.comparison?.balance_sheet?.liabilities);
-  const compEquity = parseAmount(pack?.comparison?.balance_sheet?.equity);
-  const compCheck = parseAmount(pack?.comparison?.balance_sheet?.check);
-  const currentPeriod = pack?.period ?? '2026-05';
-  const comparePeriod = pack?.comparison?.balance_sheet?.period ?? pack?.comparison?.income_statement?.period ?? '2025-05';
+  const arOverdue = useMemo(() =>
+    arData ? toN(arData.buckets['1_30']) + toN(arData.buckets['31_60']) + toN(arData.buckets['61_90']) + toN(arData.buckets['90_plus']) : 0,
+    [arData]);
+  const apOverdue = useMemo(() =>
+    apData ? toN(apData.buckets['1_30']) + toN(apData.buckets['31_60']) + toN(apData.buckets['61_90']) + toN(apData.buckets['90_plus']) : 0,
+    [apData]);
 
-  const openCash = parseAmount(pack?.cash_flow?.opening_cash);
-  const netCash = parseAmount(pack?.cash_flow?.net_cash_movement);
-  const endCash = parseAmount(pack?.cash_flow?.ending_cash);
-  const compOpenCash = parseAmount(pack?.comparison?.cash_flow?.opening_cash);
-  const compNetCash = parseAmount(pack?.comparison?.cash_flow?.net_cash_movement);
-  const compEndCash = parseAmount(pack?.comparison?.cash_flow?.ending_cash);
+  const activeData = activeTab === 'cxc' ? arData : apData;
+  const activeTotal = activeTab === 'cxc' ? arTotal : apTotal;
+  const activeOverdue = activeTab === 'cxc' ? arOverdue : apOverdue;
+
+  /* ── Filtrado de documentos ── */
+  const filteredDocs = useMemo(() => {
+    if (!activeData?.documents) return [];
+    const q = search.toLowerCase();
+    return activeData.documents.filter(d =>
+      !q ||
+      (d.partner_name || '').toLowerCase().includes(q) ||
+      (d.partner_ruc  || '').includes(q) ||
+      (d.document_series && `${d.document_series}-${d.document_number}`).toLowerCase().includes(q)
+    );
+  }, [activeData, search]);
+
+  const bucketColor = (bucket: string) =>
+    BUCKETS.find(b => b.key === bucket)?.color || C.textMut;
 
   return (
-    <div className="grid grid-cols-12 gap-6 p-6 bg-[#F3F2F1] h-full">
-      <div className="col-span-3 bg-white p-4 shadow-sm border-b-2 border-blue-600 rounded">
-        <p className="text-xs font-bold text-slate-500 uppercase">Apalancamiento Financiero</p>
-        <h2 className="text-2xl font-bold text-slate-800">{leverage.toFixed(2)}</h2>
-        <p className="text-xs text-green-600">Margen operativo: {margin.toFixed(2)} | Deuda/Patrimonio: {debtToEquity.toFixed(2)}</p>
-      </div>
+    <div style={{
+      height: '100%', overflowY: 'auto', background: C.bg,
+      color: C.text, fontFamily: "'Segoe UI', Arial, sans-serif",
+    }}>
 
-      <div className="col-span-9 bg-white p-6 shadow-md rounded-sm">
-        <div className="flex justify-between items-center mb-6">
-          <h3 className="font-bold text-slate-700">Rendimiento Mensual Comparativo</h3>
-          <div className="flex gap-2">
-            <button type="button" className="btn-fluent-secondary text-xs" onClick={() => requestExport('xlsx')}>Descargar XLSX</button>
-            <button type="button" className="btn-fluent-secondary text-xs" onClick={() => requestExport('pdf')}>Descargar PDF</button>
+      {/* ── HEADER ── */}
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '12px 18px', borderBottom: `1px solid ${C.border}`,
+        background: C.bgCard, flexWrap: 'wrap', gap: 10,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{
+            width: 38, height: 38, borderRadius: 10, flexShrink: 0,
+            background: 'linear-gradient(135deg, #22c55e, #3b82f6)',
+            display: 'grid', placeItems: 'center', fontSize: 19,
+          }}>⚖️</div>
+          <div>
+            <h2 style={{ margin: 0, fontSize: 14, fontWeight: 800, color: C.text }}>
+              Cuentas por Cobrar / Pagar — CXC / CXP
+            </h2>
+            <p style={{ margin: 0, fontSize: 10, color: C.textDim }}>
+              PCGE: 1211–1213 (CXC) · 4211–4213 (CXP) · Aging real desde la base de datos
+              {message && <> · <span style={{ color: C.accent }}>{message}</span></>}
+            </p>
           </div>
         </div>
-        <div className="h-64">
-          <Bar data={dynamicData} options={chartOptions} />
-        </div>
+        <button
+          type="button"
+          onClick={loadData}
+          disabled={loading}
+          style={{
+            padding: '7px 14px', fontSize: 11, fontWeight: 700, cursor: 'pointer',
+            background: loading ? C.bgRow : 'linear-gradient(180deg, #3b82f6, #1d4ed8)',
+            color: '#fff', border: 'none', borderRadius: 7,
+            boxShadow: loading ? 'none' : '0 3px 10px rgba(59,130,246,0.35)',
+          }}
+        >
+          {loading ? '⏳ Cargando...' : '🔄 Actualizar'}
+        </button>
       </div>
 
-      <div className="col-span-12 text-xs text-slate-600">{message}</div>
+      <div style={{ padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 14 }}>
 
-      <div className="col-span-12 bg-white shadow-xl rounded-sm overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-slate-800 text-white">
-            <tr>
-              <th className="p-4 text-left">ESTADO DE SITUACION FINANCIERA</th>
-              <th className="p-4 text-right">{currentPeriod} (PEN)</th>
-              <th className="p-4 text-right">{comparePeriod} (PEN)</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            <tr className="bg-slate-50 font-bold"><td className="p-3" colSpan={3}>ACTIVO</td></tr>
-            <tr><td className="p-3 pl-8 text-slate-600">Activos Totales</td><td className="p-3 text-right">{formatMoney(assets)}</td><td className="p-3 text-right">{formatMoney(compAssets)}</td></tr>
-            <tr><td className="p-3 pl-8 text-slate-600">Pasivos Totales</td><td className="p-3 text-right">{formatMoney(liabilities)}</td><td className="p-3 text-right">{formatMoney(compLiabilities)}</td></tr>
-            <tr><td className="p-3 pl-8 text-slate-600">Patrimonio</td><td className="p-3 text-right">{formatMoney(equity)}</td><td className="p-3 text-right">{formatMoney(compEquity)}</td></tr>
-            <tr><td className="p-3 pl-8 text-slate-600">Check Activo-Pasivo-Patrimonio</td><td className="p-3 text-right">{formatMoney(check)}</td><td className="p-3 text-right">{formatMoney(compCheck)}</td></tr>
-            <tr className="bg-slate-50 font-bold"><td className="p-3" colSpan={3}>FLUJO DE CAJA</td></tr>
-            <tr><td className="p-3 pl-8 text-slate-600">Caja Inicial</td><td className="p-3 text-right">{formatMoney(openCash)}</td><td className="p-3 text-right">{formatMoney(compOpenCash)}</td></tr>
-            <tr><td className="p-3 pl-8 text-slate-600">Movimiento Neto</td><td className="p-3 text-right">{formatMoney(netCash)}</td><td className="p-3 text-right">{formatMoney(compNetCash)}</td></tr>
-            <tr><td className="p-3 pl-8 text-slate-600">Caja Final</td><td className="p-3 text-right">{formatMoney(endCash)}</td><td className="p-3 text-right">{formatMoney(compEndCash)}</td></tr>
-          </tbody>
-        </table>
+        {/* ── KPIs ── */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+          {[
+            { label: 'TOTAL CXC',        value: fmt(arTotal),    color: C.green,  icon: '💚', top: C.green,  sub: `${arData?.documents.length ?? 0} documentos` },
+            { label: 'CXC VENCIDA',      value: fmt(arOverdue),  color: C.yellow, icon: '⚠️', top: C.yellow, sub: arTotal > 0 ? `${((arOverdue / arTotal) * 100).toFixed(1)}% del total` : 'sin vencimientos' },
+            { label: 'TOTAL CXP',        value: fmt(apTotal),    color: C.red,    icon: '❤️', top: C.red,    sub: `${apData?.documents.length ?? 0} documentos` },
+            { label: 'CXP VENCIDA',      value: fmt(apOverdue),  color: C.orange, icon: '🔴', top: C.orange, sub: apTotal > 0 ? `${((apOverdue / apTotal) * 100).toFixed(1)}% del total` : 'sin vencimientos' },
+          ].map((k, i) => (
+            <div key={i} style={{
+              background: C.bgCard, border: `1px solid ${C.border}`,
+              borderTop: `3px solid ${k.top}`, borderRadius: 10,
+              padding: '12px 14px', overflow: 'hidden', position: 'relative',
+              boxShadow: '0 3px 10px rgba(0,0,0,0.35)',
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
+                <span style={{ fontSize: 16 }}>{k.icon}</span>
+                <span style={{ fontSize: 16, fontWeight: 900, color: k.color, fontFamily: 'Consolas, monospace' }}>
+                  {k.value}
+                </span>
+              </div>
+              <p style={{ margin: '4px 0 2px', fontSize: 9, color: C.textMut, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{k.label}</p>
+              <p style={{ margin: 0, fontSize: 10, color: k.color }}>{k.sub}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* ── GRÁFICAS DE AGING ── */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+
+          {/* CXC Aging */}
+          <div style={{
+            background: C.bgCard, border: `1px solid ${C.border}`,
+            borderTop: `3px solid ${C.green}`, borderRadius: 12,
+            overflow: 'hidden', boxShadow: '0 4px 14px rgba(0,0,0,0.4)',
+          }}>
+            <div style={{
+              padding: '11px 15px', borderBottom: `1px solid ${C.border}`,
+              background: `linear-gradient(90deg, ${C.green}10, transparent)`,
+              display: 'flex', alignItems: 'center', gap: 9,
+            }}>
+              <span style={{ fontSize: 14 }}>💚</span>
+              <div>
+                <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: C.text }}>Aging — Cuentas por COBRAR (CXC)</p>
+                <p style={{ margin: 0, fontSize: 10, color: C.textDim }}>Cta. 1211 · 1212 · al {fmtDate(arData?.as_of)}</p>
+              </div>
+              <span style={{ marginLeft: 'auto', fontSize: 14, fontWeight: 900, color: C.green, fontFamily: 'Consolas, monospace' }}>
+                {fmt(arTotal)}
+              </span>
+            </div>
+            <div style={{ padding: '14px 16px' }}>
+              {arData ? (
+                <AgingBar buckets={arData.buckets} total={arTotal} />
+              ) : (
+                <p style={{ margin: 0, fontSize: 11, color: C.textDim, textAlign: 'center', padding: '16px 0' }}>
+                  {loading ? 'Cargando datos...' : 'Sin datos CXC — verifique el período activo'}
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* CXP Aging */}
+          <div style={{
+            background: C.bgCard, border: `1px solid ${C.border}`,
+            borderTop: `3px solid ${C.red}`, borderRadius: 12,
+            overflow: 'hidden', boxShadow: '0 4px 14px rgba(0,0,0,0.4)',
+          }}>
+            <div style={{
+              padding: '11px 15px', borderBottom: `1px solid ${C.border}`,
+              background: `linear-gradient(90deg, ${C.red}10, transparent)`,
+              display: 'flex', alignItems: 'center', gap: 9,
+            }}>
+              <span style={{ fontSize: 14 }}>❤️</span>
+              <div>
+                <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: C.text }}>Aging — Cuentas por PAGAR (CXP)</p>
+                <p style={{ margin: 0, fontSize: 10, color: C.textDim }}>Cta. 4211 · 4212 · al {fmtDate(apData?.as_of)}</p>
+              </div>
+              <span style={{ marginLeft: 'auto', fontSize: 14, fontWeight: 900, color: C.red, fontFamily: 'Consolas, monospace' }}>
+                {fmt(apTotal)}
+              </span>
+            </div>
+            <div style={{ padding: '14px 16px' }}>
+              {apData ? (
+                <AgingBar buckets={apData.buckets} total={apTotal} />
+              ) : (
+                <p style={{ margin: 0, fontSize: 11, color: C.textDim, textAlign: 'center', padding: '16px 0' }}>
+                  {loading ? 'Cargando datos...' : 'Sin datos CXP — verifique el período activo'}
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* ── TABS ── */}
+        <div style={{
+          display: 'flex', gap: 4, padding: 5,
+          background: C.bgCard, borderRadius: 10, border: `1px solid ${C.border}`,
+        }}>
+          {([
+            { id: 'cxc', label: '💚 Por Cobrar (CXC)', count: arData?.documents.length ?? 0 },
+            { id: 'cxp', label: '❤️ Por Pagar (CXP)',  count: apData?.documents.length ?? 0 },
+            { id: 'pcge', label: '📋 Cuentas PCGE',    count: PCGE_CXCXP.length },
+          ] as const).map(t => (
+            <button key={t.id} type="button" onClick={() => setActiveTab(t.id)} style={{
+              flex: 1, padding: '8px 12px', fontSize: 11, fontWeight: 700,
+              border: 'none', borderRadius: 7, cursor: 'pointer',
+              background: activeTab === t.id ? C.accent : 'transparent',
+              color: activeTab === t.id ? '#fff' : C.textMut,
+              transition: 'background 0.15s',
+            }}>
+              {t.label}
+              <span style={{
+                marginLeft: 6, padding: '1px 7px', borderRadius: 999, fontSize: 10,
+                background: activeTab === t.id ? 'rgba(255,255,255,0.2)' : C.border,
+                color: activeTab === t.id ? '#fff' : C.textDim,
+              }}>{t.count}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* ── TABLA DOCUMENTOS CXC / CXP ── */}
+        {(activeTab === 'cxc' || activeTab === 'cxp') && (
+          <div style={{
+            background: C.bgCard, border: `1px solid ${C.border}`,
+            borderRadius: 10, overflow: 'hidden',
+            borderTop: `3px solid ${activeTab === 'cxc' ? C.green : C.red}`,
+          }}>
+            <div style={{
+              padding: '10px 14px', borderBottom: `1px solid ${C.border}`,
+              background: `linear-gradient(90deg, ${(activeTab === 'cxc' ? C.green : C.red)}0d, transparent)`,
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+            }}>
+              <div>
+                <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>
+                  {activeTab === 'cxc' ? 'Documentos por Cobrar — Cta. 1211/1212' : 'Documentos por Pagar — Cta. 4211/4212'}
+                </span>
+                <p style={{ margin: '2px 0 0', fontSize: 10, color: C.textDim }}>
+                  {filteredDocs.length} documentos · Total: {fmt(activeOverdue > 0 ? activeTotal : 0)}
+                  {activeOverdue > 0 && <span style={{ color: C.red }}> · Vencido: {fmt(activeOverdue)}</span>}
+                </p>
+              </div>
+              <input
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Buscar por RUC, nombre o documento..."
+                style={{
+                  background: C.bgRow, border: `1px solid ${C.border}`, borderRadius: 6,
+                  color: C.text, padding: '5px 10px', fontSize: 11, width: 260,
+                }}
+              />
+            </div>
+
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <thead>
+                  <tr style={{ background: C.header }}>
+                    {['RUC / PARTNER', 'NOMBRE', 'DOCUMENTO', 'EMISIÓN', 'VENCIMIENTO', 'DÍAS MORA', 'ANTIGÜEDAD', 'SALDO', 'CUENTA'].map((h, i) => (
+                      <th key={i} style={{
+                        padding: '8px 10px', textAlign: i >= 5 && i <= 7 ? 'right' : 'left',
+                        fontSize: 10, fontWeight: 700, color: C.textMut,
+                        textTransform: 'uppercase', letterSpacing: '0.06em',
+                        borderBottom: `1px solid ${C.border}`, whiteSpace: 'nowrap',
+                      }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredDocs.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} style={{ padding: '28px 16px', textAlign: 'center', color: C.textDim, fontSize: 12 }}>
+                        {loading
+                          ? '⏳ Cargando datos desde la base de datos...'
+                          : activeData
+                            ? `Sin documentos ${activeTab === 'cxc' ? 'por cobrar' : 'por pagar'} en el período activo.`
+                            : 'Backend no disponible — inicie el servidor para ver los datos reales.'}
+                      </td>
+                    </tr>
+                  ) : filteredDocs.map((d, i) => {
+                    const bc = bucketColor(d.bucket);
+                    const docNum = d.document_series && d.document_number
+                      ? `${d.document_series}-${d.document_number}` : '—';
+                    return (
+                      <tr
+                        key={i}
+                        style={{ background: i % 2 === 1 ? C.bgRow : C.bgCard, borderBottom: `1px solid ${C.border}22` }}
+                        onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = C.bgHover; }}
+                        onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = i % 2 === 1 ? C.bgRow : C.bgCard; }}
+                      >
+                        <td style={{ padding: '8px 10px', color: C.textMut, fontFamily: 'Consolas, monospace', fontSize: 11 }}>
+                          {d.partner_ruc || '—'}
+                        </td>
+                        <td style={{ padding: '8px 10px', fontWeight: 600, color: C.text, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {d.partner_name || '—'}
+                        </td>
+                        <td style={{ padding: '8px 10px', color: C.accent, fontFamily: 'Consolas, monospace', fontWeight: 700 }}>
+                          {docNum}
+                        </td>
+                        <td style={{ padding: '8px 10px', color: C.textMut, whiteSpace: 'nowrap', fontSize: 11 }}>
+                          {fmtDate(d.issue_date)}
+                        </td>
+                        <td style={{ padding: '8px 10px', color: d.days_overdue > 0 ? C.red : C.textMut, whiteSpace: 'nowrap', fontSize: 11 }}>
+                          {fmtDate(d.due_date)}
+                        </td>
+                        <td style={{ padding: '8px 10px', textAlign: 'right', color: d.days_overdue > 0 ? C.red : C.green, fontWeight: 800, fontFamily: 'Consolas, monospace' }}>
+                          {d.days_overdue > 0 ? `+${d.days_overdue}` : '0'}
+                        </td>
+                        <td style={{ padding: '8px 10px', textAlign: 'right' }}>
+                          <span style={{
+                            padding: '3px 8px', borderRadius: 999, fontSize: 10, fontWeight: 800,
+                            color: bc, background: `${bc}18`, border: `1px solid ${bc}33`,
+                          }}>
+                            {BUCKETS.find(b => b.key === d.bucket)?.label || d.bucket}
+                          </span>
+                        </td>
+                        <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 800, color: bc, fontFamily: 'Consolas, monospace' }}>
+                          {fmt(toN(d.balance_amount))}
+                        </td>
+                        <td style={{ padding: '8px 10px', color: C.purple, fontFamily: 'Consolas, monospace', fontSize: 11 }}>
+                          {d.account_code || (activeTab === 'cxc' ? '1211' : '4211')}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                {filteredDocs.length > 0 && (
+                  <tfoot>
+                    <tr style={{ background: C.bgRow, borderTop: `2px solid ${C.border}` }}>
+                      <td colSpan={7} style={{ padding: '8px 10px', fontWeight: 800, color: C.textMut, fontSize: 10, textTransform: 'uppercase' }}>
+                        TOTAL
+                      </td>
+                      <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 900, color: activeTab === 'cxc' ? C.green : C.red, fontFamily: 'Consolas, monospace', fontSize: 13 }}>
+                        {fmt(filteredDocs.reduce((s, d) => s + toN(d.balance_amount), 0))}
+                      </td>
+                      <td />
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* ── TAB PCGE ── */}
+        {activeTab === 'pcge' && (
+          <div style={{
+            background: C.bgCard, border: `1px solid ${C.border}`,
+            borderRadius: 10, overflow: 'hidden',
+          }}>
+            <div style={{
+              padding: '10px 14px', borderBottom: `1px solid ${C.border}`,
+              background: `linear-gradient(90deg, ${C.accent}0d, transparent)`,
+            }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>
+                Plan General Contable — Cuentas CXC / CXP
+              </span>
+              <p style={{ margin: '2px 0 0', fontSize: 10, color: C.textDim }}>
+                Cuentas PCGE directamente vinculadas al módulo de Cuentas por Cobrar y Pagar
+              </p>
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <thead>
+                  <tr style={{ background: C.header }}>
+                    {['CÓDIGO', 'NOMBRE', 'TIPO', 'SALDO REAL'].map((h, i) => (
+                      <th key={i} style={{
+                        padding: '8px 12px', textAlign: 'left',
+                        fontSize: 10, fontWeight: 700, color: C.textMut,
+                        textTransform: 'uppercase', letterSpacing: '0.06em',
+                        borderBottom: `1px solid ${C.border}`,
+                      }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {PCGE_CXCXP.map((c, i) => {
+                    const isCXC = c.tipo === 'CXC';
+                    return (
+                      <tr
+                        key={c.code}
+                        style={{ background: i % 2 === 1 ? C.bgRow : C.bgCard, borderBottom: `1px solid ${C.border}22` }}
+                        onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = C.bgHover; }}
+                        onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = i % 2 === 1 ? C.bgRow : C.bgCard; }}
+                      >
+                        <td style={{ padding: '9px 12px', fontFamily: 'Consolas, monospace', fontWeight: 800, color: c.color, fontSize: 14 }}>
+                          {c.code}
+                        </td>
+                        <td style={{ padding: '9px 12px', fontWeight: 600, color: C.text }}>{c.name}</td>
+                        <td style={{ padding: '9px 12px' }}>
+                          <span style={{
+                            padding: '3px 9px', borderRadius: 999, fontSize: 10, fontWeight: 800,
+                            color: c.color, background: `${c.color}18`, border: `1px solid ${c.color}33`,
+                          }}>
+                            {c.tipo}
+                          </span>
+                        </td>
+                        <td style={{ padding: '9px 12px', fontFamily: 'Consolas, monospace', fontWeight: 800, color: c.color }}>
+                          {isCXC
+                            ? (arTotal > 0 ? fmt(arTotal) : '—')
+                            : (apTotal > 0 ? fmt(apTotal) : '—')}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
       </div>
     </div>
   );
 };
-
-
-
-

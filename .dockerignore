@@ -1,0 +1,41 @@
+# Secrets — nunca en la imagen Docker
+.env
+.env.*
+*.pem
+*.p12
+*.pfx
+*.key
+
+# Frontend (no va en la imagen del backend)
+node_modules/
+dist/
+frontend/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.venv/
+.venv_nuevo/
+.venv314/
+
+# Logs y archivos temporales
+*.log
+logs/
+api-*.log
+api-*.stderr.log
+api-*.stdout.log
+tsc_diag.txt
+importtime.log
+
+# Git
+.git/
+.gitignore
+
+# Desarrollo local
+docker-compose.override.yml
+.chroma/
+MANUAL_SISTEMA_CONTA_PRO.pdf
+openapi.json

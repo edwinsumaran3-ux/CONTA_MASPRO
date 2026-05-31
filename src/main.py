@@ -1,7 +1,24 @@
 import os
 
-# Python 3.14 on Windows can hang while importing SQLAlchemy C extensions in some environments.
+# Python 3.14 on Windows puede colgarse importando extensiones C de SQLAlchemy.
 os.environ.setdefault("DISABLE_SQLALCHEMY_CEXT_RUNTIME", "1")
+
+# ── OTEL: deshabilitar el SDK si no hay colector configurado ──────────────
+# Estas variables DEBEN estar en os.environ ANTES de cualquier import de
+# opentelemetry, porque el SDK las lee en el momento de la importación.
+# Los valores vienen del .env; si no están, se fuerzan a "none"/"true".
+from src.config import settings as _settings  # importación mínima y segura
+os.environ.setdefault("OTEL_SDK_DISABLED",        _settings.otel_sdk_disabled)
+os.environ.setdefault("OTEL_TRACES_EXPORTER",     _settings.otel_traces_exporter)
+os.environ.setdefault("OTEL_METRICS_EXPORTER",    _settings.otel_metrics_exporter)
+os.environ.setdefault("OTEL_LOGS_EXPORTER",       _settings.otel_logs_exporter)
+# Si hay endpoint configurado, reactivar el SDK automáticamente
+if _settings.otel_exporter_otlp_endpoint:
+    os.environ["OTEL_SDK_DISABLED"]     = "false"
+    os.environ["OTEL_TRACES_EXPORTER"]  = "otlp"
+    os.environ["OTEL_METRICS_EXPORTER"] = "otlp"
+    os.environ["OTEL_LOGS_EXPORTER"]    = "otlp"
+# ─────────────────────────────────────────────────────────────────────────
 
 from contextlib import asynccontextmanager
 
@@ -121,7 +138,10 @@ def create_app() -> FastAPI:
     app.include_router(hr_router, prefix="/api/v1")
     app.include_router(integrations_router, prefix="/api/v1")
     app.include_router(events_router, prefix="/api/v1")
-    if _otel_available:
+    # Instrumentar FastAPI con OTEL solo si hay un colector configurado
+    # Sin endpoint configurado, el instrumentador intenta exportar a localhost:4317
+    # y genera "StatusCode.UNAVAILABLE" en los logs sin parar.
+    if _otel_available and settings.otel_exporter_otlp_endpoint:
         _FastAPIInstrumentor.instrument_app(app)
     return app
 

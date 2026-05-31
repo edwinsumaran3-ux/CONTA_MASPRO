@@ -2,14 +2,42 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, text
 
-from src.api.dependencies import require_roles
+from src.api.dependencies import get_current_context, require_roles
 from src.domain.models.accounting import ChartAccount, CostCenter
 from src.infrastructure.db.session import AsyncSessionLocal
 from src.infrastructure.unit_of_work import UnitOfWork
 
 router = APIRouter(prefix="/master", tags=["Master Data"])
+
+
+@router.get("/company-info")
+async def company_info(ctx=Depends(get_current_context)):
+    """Devuelve datos de la empresa registrada para el tenant activo."""
+    async with UnitOfWork(AsyncSessionLocal, ctx["tenant_id"]) as uow:
+        result = await uow.session.execute(
+            text("SELECT legal_name, ruc, trade_name, sunat_environment FROM companies WHERE tenant_id = :tid LIMIT 1"),
+            {"tid": ctx["tenant_id"]},
+        )
+        row = result.fetchone()
+    if row:
+        return {
+            "legal_name": row[0] or "",
+            "ruc":        row[1] or "",
+            "trade_name": row[2] or row[0] or "",
+            "sunat_env":  row[3] or "BETA",
+        }
+    # Fallback: leer desde tabla tenants
+    async with UnitOfWork(AsyncSessionLocal, ctx["tenant_id"]) as uow:
+        r2 = await uow.session.execute(
+            text("SELECT legal_name, ruc FROM tenants WHERE id = :tid LIMIT 1"),
+            {"tid": ctx["tenant_id"]},
+        )
+        row2 = r2.fetchone()
+    if row2:
+        return {"legal_name": row2[0] or "", "ruc": row2[1] or "", "trade_name": row2[0] or "", "sunat_env": "BETA"}
+    return {"legal_name": "", "ruc": "", "trade_name": "", "sunat_env": "BETA"}
 
 
 class ChartAccountUpsertRequest(BaseModel):

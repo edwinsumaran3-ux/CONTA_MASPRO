@@ -1,11 +1,90 @@
-node_modules
+# ============================================================
+#  CONTA_PRO Enterprise — .gitignore
+# ============================================================
 
-.venv_nuevo/
+# ── CRÍTICO: Secrets y variables de entorno ─────────────────
+.env
+.env.local
+.env.*.local
+.env.production
+.env.staging
+config/.env.prod
+config/.env.staging
+*.pem
+*.p12
+*.pfx
+*.key
+*.crt
+*.cer
+
+# ── Python ──────────────────────────────────────────────────
 __pycache__/
-*.pyc
-
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+build/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+.hypothesis/
+.tox/
+venv/
 .venv/
 .venv_nuevo/
 .venv314/
-__pycache__/
-*.pyc
+ENV/
+env/
+
+# ── Node / Frontend ──────────────────────────────────────────
+node_modules/
+dist/
+.next/
+.cache/
+
+# ── Logs ────────────────────────────────────────────────────
+*.log
+logs/
+api-*.log
+api-*.stderr.log
+api-*.stdout.log
+vite-*.log
+vite-*.stderr.log
+vite-*.stdout.log
+importtime.log
+
+# ── Base de datos local ──────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+
+# ── IDE / Editores ───────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ── Telemetría / Caché ───────────────────────────────────────
+.chroma/
+
+# ── Archivos de diagnóstico generados ───────────────────────
+tsc_diag.txt
+importtime.log
+openapi.json
+MANUAL_SISTEMA_CONTA_PRO.pdf
+api-debug.*
+api-test.*
+api.stderr.log
+api.stdout.log
+
+# ── Docker local override ────────────────────────────────────
+docker-compose.override.yml

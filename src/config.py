@@ -52,5 +52,10 @@ class Settings(BaseSettings):
     s3_bucket: str | None = None
     secrets_manager_uri: str | None = None
     otel_exporter_otlp_endpoint: str | None = None
+    # SDK deshabilitado cuando no hay colector — evita el flood de StatusCode.UNAVAILABLE
+    otel_sdk_disabled:        str = "true"
+    otel_traces_exporter:     str = "none"
+    otel_metrics_exporter:    str = "none"
+    otel_logs_exporter:       str = "none"
 
 settings = Settings()

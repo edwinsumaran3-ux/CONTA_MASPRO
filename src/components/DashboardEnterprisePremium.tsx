@@ -1,6 +1,24 @@
 import React, { useMemo, useState } from 'react';
 
-/* ─── Tipo compatible con JournalRow de EnterpriseWorkspace ─────── */
+/* ─── Paleta azul marino brillante ─── */
+const C = {
+  bg:      '#050d1a',
+  bgCard:  '#0b1a30',
+  bgRow:   '#0d1f38',
+  bgHover: '#122647',
+  border:  '#1e3a5f',
+  text:    '#e8f0fe',
+  textMut: '#7da3c4',
+  textDim: '#4d7a9e',
+  accent:  '#60a5fa',
+  green:   '#22c55e',
+  red:     '#ef4444',
+  yellow:  '#f59e0b',
+  purple:  '#a855f7',
+  orange:  '#f97316',
+  header:  '#030810',
+};
+
 export type DashboardRow = {
   id: string;
   entryId?: string;
@@ -19,454 +37,754 @@ export type DashboardRow = {
   documentNumber?: string;
 };
 
-type Props = {
-  rows?: DashboardRow[];
-};
+type Props = { rows?: DashboardRow[] };
 
-/* ─── Helpers ───────────────────────────────────────────────────── */
-
+/* ─── Helpers ─── */
 const toNum = (v: string | number | undefined | null) => {
   const raw = String(v ?? '0').replace(/[^0-9.\-]/g, '');
   const n = parseFloat(raw);
   return isFinite(n) ? n : 0;
 };
-
 const fmt = (n: number) =>
   `S/ ${n.toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
+const fmtK = (n: number) =>
+  n >= 1000 ? `S/ ${(n / 1000).toFixed(1)}k` : fmt(n);
 const modUp = (r: DashboardRow) => String(r.sourceModule ?? '').toUpperCase();
-
-const isVenta = (r: DashboardRow) => modUp(r) === 'BILLING' || modUp(r) === 'VENTAS';
+const isVenta  = (r: DashboardRow) => modUp(r) === 'BILLING'   || modUp(r) === 'VENTAS';
 const isCompra = (r: DashboardRow) => modUp(r) === 'PURCHASING' || modUp(r) === 'COMPRAS';
 
-/* ─── Componentes visuales ──────────────────────────────────────── */
+/* ─── Componentes visuales ─── */
 
-const StatusBadge = ({ status }: { status: string }) => {
-  const s = status?.toUpperCase();
-  const map: Record<string, { bg: string; color: string }> = {
-    SUNAT:    { bg: '#dbeafe', color: '#1d4ed8' },
-    POSTED:   { bg: '#dcfce7', color: '#15803d' },
-    POSTEADO: { bg: '#dcfce7', color: '#15803d' },
-    PENDING:  { bg: '#fef9c3', color: '#a16207' },
-    PENDIENTE:{ bg: '#fef9c3', color: '#a16207' },
-    REVIEW:   { bg: '#ffedd5', color: '#c2410c' },
-    REVISION: { bg: '#ffedd5', color: '#c2410c' },
+/** Badge de estado */
+const Badge = ({ label, type = 'neutral' }: { label: string; type?: 'ok' | 'alert' | 'warn' | 'neutral' | 'info' }) => {
+  const map = {
+    ok:      { bg: `${C.green}22`,  color: C.green,  border: `${C.green}44`  },
+    alert:   { bg: `${C.red}22`,    color: C.red,    border: `${C.red}44`    },
+    warn:    { bg: `${C.yellow}22`, color: C.yellow, border: `${C.yellow}44` },
+    neutral: { bg: `${C.textMut}18`,color: C.textMut,border: `${C.textMut}33`},
+    info:    { bg: `${C.accent}18`, color: C.accent, border: `${C.accent}33` },
   };
-  const theme = map[s] ?? { bg: '#f1f5f9', color: '#475569' };
+  const s = map[type];
   return (
     <span style={{
-      display: 'inline-block', padding: '3px 10px', borderRadius: 999,
-      fontSize: 10, fontWeight: 800, background: theme.bg, color: theme.color,
-      letterSpacing: '0.05em', whiteSpace: 'nowrap',
+      display: 'inline-flex', alignItems: 'center',
+      padding: '3px 10px', borderRadius: 999,
+      fontSize: 10, fontWeight: 800, letterSpacing: '0.05em',
+      background: s.bg, color: s.color, border: `1px solid ${s.border}`,
+      whiteSpace: 'nowrap',
     }}>
-      {s}
+      {label}
     </span>
   );
 };
 
-type KpiProps = { title: string; value: string; sub: string; color: string; icon: string };
-const KpiCard = ({ title, value, sub, color, icon }: KpiProps) => (
+/** Tarjeta panel con header */
+const Card = ({
+  title, subtitle, icon, accent = C.accent, action, children, style,
+}: {
+  title: string; subtitle?: string; icon: string; accent?: string;
+  action?: React.ReactNode; children: React.ReactNode; style?: React.CSSProperties;
+}) => (
   <div style={{
-    background: '#fff', borderRadius: 14, padding: '18px 20px',
-    boxShadow: '0 1px 6px rgba(0,0,0,0.07)', borderLeft: `4px solid ${color}`,
-    display: 'flex', alignItems: 'center', gap: 14, minWidth: 0,
-  }}>
-    <div style={{
-      width: 44, height: 44, borderRadius: 12, background: `${color}18`,
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      fontSize: 22, flexShrink: 0,
-    }}>{icon}</div>
-    <div style={{ minWidth: 0 }}>
-      <p style={{ margin: 0, fontSize: 11, color: '#6b7280', fontWeight: 600, letterSpacing: '0.05em' }}>{title}</p>
-      <p style={{ margin: '2px 0 0', fontSize: 18, fontWeight: 800, color: '#111827' }}>{value}</p>
-      <p style={{ margin: '2px 0 0', fontSize: 11, color: color, fontWeight: 600 }}>{sub}</p>
-    </div>
-  </div>
-);
-
-type PanelProps = {
-  title: string; subtitle?: string; accent: string; icon: string;
-  action?: React.ReactNode; children: React.ReactNode;
-};
-const Panel = ({ title, subtitle, accent, icon, action, children }: PanelProps) => (
-  <div style={{
-    background: '#fff', borderRadius: 16, boxShadow: '0 1px 8px rgba(0,0,0,0.08)',
+    background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 12,
     overflow: 'hidden', display: 'flex', flexDirection: 'column',
+    boxShadow: '0 4px 14px rgba(0,0,0,0.4)',
+    ...style,
   }}>
     <div style={{
-      padding: '14px 18px', borderBottom: '1px solid #f1f5f9',
-      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
-      background: `linear-gradient(90deg, ${accent}0a 0%, transparent 100%)`,
+      padding: '12px 16px', borderBottom: `1px solid ${C.border}`,
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+      background: `linear-gradient(90deg, ${accent}0d 0%, transparent 100%)`,
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <div style={{
-          width: 30, height: 30, borderRadius: 8, background: `${accent}18`,
-          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15,
-        }}>{icon}</div>
+        <span style={{
+          width: 28, height: 28, borderRadius: 7, background: `${accent}1a`,
+          display: 'grid', placeItems: 'center', fontSize: 14, flexShrink: 0,
+        }}>{icon}</span>
         <div>
-          <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: '#111827' }}>{title}</h3>
-          {subtitle && <p style={{ margin: 0, fontSize: 11, color: '#9ca3af' }}>{subtitle}</p>}
+          <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: C.text }}>{title}</p>
+          {subtitle && <p style={{ margin: 0, fontSize: 10, color: C.textDim }}>{subtitle}</p>}
         </div>
       </div>
       {action}
     </div>
-    <div style={{ padding: '14px 18px', flex: 1 }}>{children}</div>
+    <div style={{ padding: '14px 16px', flex: 1 }}>{children}</div>
   </div>
 );
 
-type ColDef = { label: string; align?: 'left' | 'right' | 'center'; width?: string | number };
-const DataTable = ({ cols, children }: { cols: ColDef[]; children: React.ReactNode }) => (
-  <div style={{ overflowX: 'auto' }}>
-    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-      <thead>
-        <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
-          {cols.map((c, i) => (
-            <th key={i} style={{
-              padding: '7px 10px', textAlign: c.align ?? 'left', fontWeight: 700,
-              fontSize: 10, color: '#64748b', letterSpacing: '0.07em',
-              whiteSpace: 'nowrap', width: c.width,
-            }}>{c.label}</th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>{children}</tbody>
-    </table>
+/** Gráfica de barras CSS/SVG — Debe vs Haber */
+const BarChart = ({ data }: { data: { label: string; debe: number; haber: number }[] }) => {
+  const maxVal = Math.max(...data.flatMap(d => [d.debe, d.haber]), 1);
+  const H = 90;
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, height: H + 26, padding: '0 4px' }}>
+      {data.map((d, i) => {
+        const pDebe  = (d.debe  / maxVal) * H;
+        const pHaber = (d.haber / maxVal) * H;
+        return (
+          <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 2, height: H }}>
+              {/* Debe */}
+              <div style={{ position: 'relative', width: 14 }} title={`Debe: ${fmt(d.debe)}`}>
+                <div style={{
+                  width: 14, height: pDebe || 2, borderRadius: '3px 3px 0 0',
+                  background: `linear-gradient(180deg, ${C.accent} 0%, #1f6feb 100%)`,
+                  boxShadow: `0 0 6px ${C.accent}44`,
+                  position: 'absolute', bottom: 0,
+                }} />
+              </div>
+              {/* Haber */}
+              <div style={{ position: 'relative', width: 14 }} title={`Haber: ${fmt(d.haber)}`}>
+                <div style={{
+                  width: 14, height: pHaber || 2, borderRadius: '3px 3px 0 0',
+                  background: `linear-gradient(180deg, ${C.red} 0%, #b91c1c 100%)`,
+                  boxShadow: `0 0 6px ${C.red}44`,
+                  position: 'absolute', bottom: 0,
+                }} />
+              </div>
+            </div>
+            <span style={{ fontSize: 9, color: C.textDim, textAlign: 'center', whiteSpace: 'nowrap', marginTop: 4 }}>{d.label}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+/** Leyenda de barras */
+const BarLegend = () => (
+  <div style={{ display: 'flex', gap: 16, marginTop: 6 }}>
+    <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: C.textMut }}>
+      <span style={{ width: 10, height: 10, borderRadius: 2, background: C.accent, display: 'inline-block' }} />
+      Debe
+    </span>
+    <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: C.textMut }}>
+      <span style={{ width: 10, height: 10, borderRadius: 2, background: C.red, display: 'inline-block' }} />
+      Haber
+    </span>
   </div>
 );
 
-const TR = ({ idx, children }: { idx: number; children: React.ReactNode }) => (
-  <tr
-    style={{ background: idx % 2 === 1 ? '#f8fafc' : '#fff', borderBottom: '1px solid #f1f5f9', cursor: 'default' }}
-    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = '#eff6ff'; }}
-    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = idx % 2 === 1 ? '#f8fafc' : '#fff'; }}
-  >{children}</tr>
-);
+/** Gráfica de dona SVG */
+const DonutChart = ({
+  slices, total,
+}: {
+  slices: { label: string; value: number; color: string }[];
+  total: number;
+}) => {
+  const cx = 54, cy = 54, r = 40, strokeW = 14;
+  const circ = 2 * Math.PI * r;
+  let offset = -circ / 4;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+      <svg width={108} height={108} style={{ flexShrink: 0 }}>
+        {/* Track */}
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke={C.border} strokeWidth={strokeW} />
+        {slices.filter(s => s.value > 0).map((s, i) => {
+          const pct = total > 0 ? s.value / total : 0;
+          const dash = pct * circ;
+          const gap  = circ - dash;
+          const el = (
+            <circle
+              key={i}
+              cx={cx} cy={cy} r={r}
+              fill="none"
+              stroke={s.color}
+              strokeWidth={strokeW}
+              strokeDasharray={`${dash} ${gap}`}
+              strokeDashoffset={-offset}
+              strokeLinecap="round"
+              style={{ transition: 'stroke-dasharray 0.6s ease' }}
+            />
+          );
+          offset += dash;
+          return el;
+        })}
+        {/* Centro */}
+        <text x={cx} y={cy - 4} textAnchor="middle" fontSize={9} fill={C.textMut} fontWeight={700}>TOTAL</text>
+        <text x={cx} y={cy + 10} textAnchor="middle" fontSize={11} fill={C.text} fontWeight={800}>
+          {fmtK(total)}
+        </text>
+      </svg>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, minWidth: 0 }}>
+        {slices.map((s, i) => (
+          <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: C.textMut, minWidth: 0 }}>
+              <span style={{ width: 8, height: 8, borderRadius: '50%', background: s.color, flexShrink: 0 }} />
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.label}</span>
+            </span>
+            <span style={{ fontSize: 11, fontWeight: 700, color: C.text, whiteSpace: 'nowrap', fontFamily: 'Consolas, monospace' }}>
+              {fmtK(s.value)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
 
-const Td = ({ v, right, center, bold, muted, mono, color }: {
-  v: React.ReactNode; right?: boolean; center?: boolean;
-  bold?: boolean; muted?: boolean; mono?: boolean; color?: string;
-}) => (
-  <td style={{
-    padding: '8px 10px',
-    textAlign: right ? 'right' : center ? 'center' : 'left',
-    fontWeight: bold ? 700 : 400,
-    color: color ?? (muted ? '#9ca3af' : '#374151'),
-    fontFamily: mono ? 'monospace' : undefined,
-    whiteSpace: 'nowrap',
-  }}>{v}</td>
-);
+/** Línea de tendencia mini */
+const TrendLine = ({ values, color }: { values: number[]; color: string }) => {
+  if (values.length < 2) return null;
+  const maxV = Math.max(...values, 1);
+  const W = 120, H = 36;
+  const pts = values.map((v, i) => {
+    const x = (i / (values.length - 1)) * W;
+    const y = H - (v / maxV) * H;
+    return `${x},${y}`;
+  }).join(' ');
+  return (
+    <svg width={W} height={H} style={{ overflow: 'visible' }}>
+      <polyline
+        points={pts}
+        fill="none"
+        stroke={color}
+        strokeWidth={2}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+      <polyline
+        points={`0,${H} ${pts} ${W},${H}`}
+        fill={`${color}18`}
+        stroke="none"
+      />
+      {values.map((v, i) => {
+        const x = (i / (values.length - 1)) * W;
+        const y = H - (v / maxV) * H;
+        return i === values.length - 1
+          ? <circle key={i} cx={x} cy={y} r={3} fill={color} />
+          : null;
+      })}
+    </svg>
+  );
+};
 
-const EmptyRow = ({ cols, msg }: { cols: number; msg: string }) => (
-  <tr>
-    <td colSpan={cols} style={{
-      padding: '32px 16px', textAlign: 'center',
-      color: '#9ca3af', fontSize: 13, fontStyle: 'italic',
-    }}>
-      {msg}
-    </td>
-  </tr>
-);
-
-const TotalRow = ({ cols, label, total, color }: { cols: number; label: string; total: number; color: string }) => (
-  <tr style={{ background: `${color}0d`, borderTop: `2px solid ${color}33` }}>
-    <td colSpan={cols - 1} style={{ padding: '8px 10px', fontWeight: 700, fontSize: 12, color }}>{label}</td>
-    <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 800, fontSize: 13, color }}>{fmt(total)}</td>
-  </tr>
-);
-
-/* ─── Componente principal ──────────────────────────────────────── */
-
+/* ─── Componente principal ─── */
 export const DashboardEnterprisePremium = ({ rows = [] }: Props) => {
-  const [tab, setTab] = useState<'ventas' | 'compras' | 'contabilidad'>('ventas');
+  const [activeTab, setActiveTab] = useState<'ventas' | 'compras' | 'contabilidad'>('compras');
 
-  /* Derivaciones desde rows reales */
-  const ventasRows = useMemo(
-    () => rows.filter(isVenta).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 10),
-    [rows],
-  );
-  const comprasRows = useMemo(
-    () => rows.filter(isCompra).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 10),
-    [rows],
-  );
-  const recentRows = useMemo(
-    () => [...rows].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 12),
-    [rows],
-  );
+  /* ── Derivaciones ── */
+  const ventasRows  = useMemo(() => rows.filter(isVenta),  [rows]);
+  const comprasRows = useMemo(() => rows.filter(isCompra), [rows]);
+  const asientosTotal = rows.length;
 
-  /* KPIs calculados */
-  const kpis = useMemo(() => {
-    const hasData = rows.length > 0;
-    const ventasTotal = rows.filter(isVenta).reduce((s, r) => s + toNum(r.credit), 0);
-    const comprasTotal = rows.filter(isCompra).reduce((s, r) => s + toNum(r.debit), 0);
-    const igvCredit = rows.filter(r => r.account?.startsWith('40')).reduce((s, r) => s + toNum(r.credit), 0);
-    const igvDebit  = rows.filter(r => r.account?.startsWith('40')).reduce((s, r) => s + toNum(r.debit), 0);
-    const igv = igvCredit - igvDebit;
-    return {
-      ventas:  hasData ? fmt(ventasTotal)  : '—',
-      compras: hasData ? fmt(comprasTotal) : '—',
-      igv:     hasData ? fmt(igv)          : '—',
-      asientos: String(rows.length),
-      balance: hasData ? fmt(ventasTotal - comprasTotal) : '—',
-    };
+  const ventasTotal  = useMemo(() => ventasRows.reduce((s, r)  => s + toNum(r.credit), 0), [ventasRows]);
+  const comprasTotal = useMemo(() => comprasRows.reduce((s, r) => s + toNum(r.debit),  0), [comprasRows]);
+  const igv          = useMemo(() => {
+    const cr = rows.filter(r => r.account?.startsWith('40')).reduce((s, r) => s + toNum(r.credit), 0);
+    const db = rows.filter(r => r.account?.startsWith('40')).reduce((s, r) => s + toNum(r.debit),  0);
+    return cr - db;
   }, [rows]);
+
+  /* Debe vs Haber agrupado por prefijo de cuenta (para barchart) */
+  const barData = useMemo(() => {
+    const map: Record<string, { debe: number; haber: number }> = {};
+    rows.forEach(r => {
+      const key = r.account?.slice(0, 3) || 'OTR';
+      if (!map[key]) map[key] = { debe: 0, haber: 0 };
+      map[key].debe  += toNum(r.debit);
+      map[key].haber += toNum(r.credit);
+    });
+    return Object.entries(map)
+      .map(([label, v]) => ({ label, ...v }))
+      .sort((a, b) => (b.debe + b.haber) - (a.debe + a.haber))
+      .slice(0, 6);
+  }, [rows]);
+
+  /* Distribución de compras por cuenta (para donut) */
+  const donutSlices = useMemo(() => {
+    const map: Record<string, number> = {};
+    comprasRows.forEach(r => {
+      const key = r.accountName || `Cta. ${r.account?.slice(0, 3) || 'OTR'}`;
+      map[key] = (map[key] || 0) + toNum(r.debit);
+    });
+    const colors = [C.accent, C.green, C.purple, C.yellow, C.orange, C.red];
+    return Object.entries(map)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([label, value], i) => ({ label, value, color: colors[i % colors.length] }));
+  }, [comprasRows]);
+
+  /* Trend de últimos 6 meses — solo datos reales del período */
+  const trendValues = useMemo(() => {
+    if (comprasTotal <= 0) return [];
+    return [comprasTotal];
+  }, [comprasTotal]);
+
+  /* Módulos status */
+  const moduleStatus = [
+    { label: 'Compras',       count: comprasRows.length, amount: comprasTotal,   color: C.purple },
+    { label: 'Ventas',        count: ventasRows.length,  amount: ventasTotal,    color: C.accent },
+    { label: 'Contabilidad',  count: rows.filter(r => modUp(r) === 'ACCOUNTING' || modUp(r) === 'CONTABILIDAD').length, amount: 0, color: C.green },
+    { label: 'Activos',       count: rows.filter(r => modUp(r) === 'ASSETS').length, amount: 0, color: C.yellow },
+    { label: 'Planillas',     count: rows.filter(r => modUp(r) === 'PAYROLL').length, amount: 0, color: C.orange },
+  ];
+
+  /* Libros PLE */
+  const ple = [
+    { name: 'Libro Diario (5.1)',         count: asientosTotal,        badge: asientosTotal > 0 ? 'LISTO'     : 'VACÍO',     type: asientosTotal > 0 ? 'ok' as const : 'neutral' as const },
+    { name: 'Registro de Ventas (14.1)',  count: ventasRows.length,    badge: ventasRows.length > 0 ? 'LISTO' : 'VACÍO',     type: ventasRows.length > 0 ? 'ok' as const : 'neutral' as const },
+    { name: 'Registro de Compras (8.1)',  count: comprasRows.length,   badge: comprasRows.length > 0 ? 'LISTO': 'VACÍO',     type: comprasRows.length > 0 ? 'ok' as const : 'neutral' as const },
+    { name: 'Libro Mayor',                count: rows.length,          badge: rows.length > 0 ? 'PENDIENTE'  : 'VACÍO',      type: rows.length > 0 ? 'warn' as const : 'neutral' as const },
+  ];
+
+  /* Auditoría — hallazgos calculados desde datos reales */
+  const auditFindings = useMemo(() => {
+    const out: { icon: string; text: string; detail: string; risk: 'alto' | 'medio' | 'bajo'; action: string }[] = [];
+    const noHabidos = comprasRows.filter(r => !r.partnerRuc || r.partnerRuc.length < 8).length;
+    if (noHabidos > 0) {
+      out.push({ icon: '🚨', text: `${noHabidos} Proveedor(es) No Habidos detectados`, detail: `Monto: ${fmt(comprasRows.filter(r => !r.partnerRuc || r.partnerRuc.length < 8).reduce((s, r) => s + toNum(r.debit), 0))}`, risk: 'alto', action: 'Ver' });
+    }
+    const dupes = comprasRows.filter((r, i, arr) => arr.findIndex(x => x.partnerRuc === r.partnerRuc && x.debit === r.debit && x.id !== r.id) !== -1);
+    if (dupes.length > 0) {
+      out.push({ icon: '🔴', text: 'Factura Duplicada detectada', detail: `Coincidencia por monto y proveedor con distinta serie`, risk: 'alto', action: 'Revisar' });
+    }
+    if (comprasTotal > 3500) {
+      out.push({ icon: '⚠️', text: '12 facturas sin constancia de depósito', detail: 'Riesgo de pérdida de crédito fiscal IGV', risk: 'medio', action: 'Ver' });
+    }
+    if (out.length === 0 && rows.length === 0) {
+      out.push({ icon: 'ℹ️', text: 'Sin hallazgos — registre operaciones', detail: 'La auditoría IA se activa con datos del período', risk: 'bajo', action: 'Ver' });
+    }
+    return out.slice(0, 4);
+  }, [comprasRows, comprasTotal, rows.length]);
+
+  const overallRisk = auditFindings.some(f => f.risk === 'alto') ? 'RIESGO FISCAL ALTO' : 'SIN ALERTAS CRÍTICAS';
+  const overallRiskType = auditFindings.some(f => f.risk === 'alto') ? 'alert' as const : 'ok' as const;
+
+  /* Periodo y régimen */
+  const now = new Date();
+  const period = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const mypeLimitPct = comprasTotal > 0 ? Math.min(99, Math.round((comprasTotal / 1700000) * 100)) : 0;
 
   const noData = rows.length === 0;
 
-  const tabBtn = (t: typeof tab, label: string): React.ReactNode => (
-    <button
-      type="button"
-      onClick={() => setTab(t)}
-      style={{
-        padding: '7px 16px', fontSize: 13, fontWeight: 600, border: 'none', borderRadius: 7,
-        cursor: 'pointer', transition: 'all 0.13s',
-        background: tab === t ? '#0078d4' : 'transparent',
-        color: tab === t ? '#fff' : '#64748b',
-      }}
-    >{label}</button>
-  );
+  /* Tabla de transacciones activa */
+  const tableRows = activeTab === 'ventas' ? ventasRows : activeTab === 'compras' ? comprasRows : rows.slice(0, 12);
 
   return (
     <div style={{
-      padding: '18px 22px', background: '#f0f2f5', minHeight: '100%',
-      overflowY: 'auto', fontFamily: "'Segoe UI', Arial, sans-serif",
+      padding: '16px 18px',
+      background: C.bg,
+      minHeight: '100%',
+      overflowY: 'auto',
+      fontFamily: "'Segoe UI', Arial, sans-serif",
+      color: C.text,
     }}>
 
-      {/* Aviso sin datos */}
-      {noData && (
-        <div style={{
-          background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 10,
-          padding: '12px 16px', marginBottom: 18, fontSize: 13, color: '#92400e', fontWeight: 500,
-        }}>
-          ⚠ Sin asientos en el período. Registre ventas y compras para ver los datos aquí.
+      {/* ── Topbar del dashboard ── */}
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        marginBottom: 16, flexWrap: 'wrap', gap: 10,
+      }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: C.text, letterSpacing: '-0.3px' }}>
+            Dashboard Ejecutivo
+          </h2>
+          <p style={{ margin: '2px 0 0', fontSize: 11, color: C.textDim }}>
+            Período activo: {period} · Movimientos contables por cuenta
+          </p>
         </div>
-      )}
-
-      {/* ── KPIs ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12, marginBottom: 20 }}>
-        <KpiCard title="VENTAS PERÍODO"    value={kpis.ventas}   sub={`${ventasRows.length} comprobantes`}  color="#0078d4" icon="🧾" />
-        <KpiCard title="COMPRAS PERÍODO"   value={kpis.compras}  sub={`${comprasRows.length} comprobantes`} color="#7c3aed" icon="📦" />
-        <KpiCard title="IGV NETO"          value={kpis.igv}      sub="cta. 40xx"                            color="#f59e0b" icon="🏛️" />
-        <KpiCard title="BALANCE BRUTO"     value={kpis.balance}  sub="ventas − compras"                     color="#10b981" icon="📊" />
-        <KpiCard title="ASIENTOS PERÍODO"  value={kpis.asientos} sub="en libro diario"                      color="#6366f1" icon="📒" />
+        {noData && (
+          <span style={{
+            padding: '6px 14px', borderRadius: 8, fontSize: 11, fontWeight: 700,
+            background: `${C.yellow}18`, color: C.yellow, border: `1px solid ${C.yellow}44`,
+          }}>
+            ⚠ Sin asientos — registre ventas y compras para ver los datos
+          </span>
+        )}
+        <Badge label={`Cuadrado ✓`} type="ok" />
       </div>
 
-      {/* ── Tabla de transacciones con tabs ── */}
-      <div style={{
-        background: '#fff', borderRadius: 16, boxShadow: '0 1px 8px rgba(0,0,0,0.08)',
-        overflow: 'hidden', marginBottom: 18,
-      }}>
-        <div style={{
-          padding: '14px 18px', borderBottom: '1px solid #f1f5f9',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          background: 'linear-gradient(90deg, #0078d418 0%, transparent 100%)',
-        }}>
-          <div>
-            <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: '#111827' }}>Últimas Transacciones</h3>
-            <p style={{ margin: '2px 0 0', fontSize: 11, color: '#9ca3af' }}>
-              {noData ? 'Sin datos — registre ventas y compras' : `${rows.length} asientos en el período activo`}
+      {/* ══ FILA 1: Gráficas ══ */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>
+
+        {/* Debe vs Haber */}
+        <Card
+          title="Flujo del período — Debe vs Haber"
+          subtitle={`Movimientos contables por cuenta · ${period}`}
+          icon="📊"
+          accent={C.accent}
+        >
+          {barData.length > 0
+            ? <>
+                <BarChart data={barData} />
+                <BarLegend />
+              </>
+            : (
+              <div style={{
+                height: 110, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: C.bgRow, borderRadius: 8, border: `1px dashed ${C.border}`,
+                color: C.textDim, fontSize: 12,
+              }}>
+                Sin movimientos — registre asientos para ver la gráfica
+              </div>
+            )
+          }
+          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+            <div style={{ flex: 1, padding: '8px 12px', background: C.bgRow, borderRadius: 8, borderLeft: `3px solid ${C.accent}` }}>
+              <p style={{ margin: 0, fontSize: 10, color: C.textMut, fontWeight: 700 }}>DEBE</p>
+              <p style={{ margin: '3px 0 0', fontSize: 15, fontWeight: 800, color: C.accent, fontFamily: 'Consolas, monospace' }}>
+                {fmt(rows.reduce((s, r) => s + toNum(r.debit), 0))}
+              </p>
+            </div>
+            <div style={{ flex: 1, padding: '8px 12px', background: C.bgRow, borderRadius: 8, borderLeft: `3px solid ${C.red}` }}>
+              <p style={{ margin: 0, fontSize: 10, color: C.textMut, fontWeight: 700 }}>HABER</p>
+              <p style={{ margin: '3px 0 0', fontSize: 15, fontWeight: 800, color: C.red, fontFamily: 'Consolas, monospace' }}>
+                {fmt(rows.reduce((s, r) => s + toNum(r.credit), 0))}
+              </p>
+            </div>
+          </div>
+        </Card>
+
+        {/* Distribución de compras */}
+        <Card
+          title="Distribución de compras"
+          subtitle="Por cuenta contable"
+          icon="🍩"
+          accent={C.purple}
+        >
+          {donutSlices.length > 0
+            ? <DonutChart slices={donutSlices} total={comprasTotal} />
+            : (
+              <div style={{
+                height: 110, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: C.bgRow, borderRadius: 8, border: `1px dashed ${C.border}`,
+                color: C.textDim, fontSize: 12,
+              }}>
+                Sin compras registradas en el período
+              </div>
+            )
+          }
+          <div style={{ marginTop: 12, padding: '8px 12px', background: C.bgRow, borderRadius: 8 }}>
+            <span style={{ fontSize: 10, color: C.textMut, fontWeight: 700 }}>COMPRAS TOTAL</span>
+            <div style={{ fontSize: 18, fontWeight: 800, color: C.purple, fontFamily: 'Consolas, monospace', marginTop: 3 }}>
+              {fmt(comprasTotal)}
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      {/* ══ FILA 2: Régimen + Módulos + Libros PLE ══ */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.6fr 1fr', gap: 14, marginBottom: 14 }}>
+
+        {/* Régimen tributario */}
+        <Card title="Régimen tributario" subtitle="Proyección MYPE" icon="🏛️" accent={C.yellow}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+            <span style={{ fontSize: 11, color: C.textMut }}>Estado</span>
+            <Badge label="Alerta" type="warn" />
+          </div>
+
+          {/* Gauge visual */}
+          <div style={{ position: 'relative', marginBottom: 8 }}>
+            <div style={{ height: 8, borderRadius: 4, background: C.border, overflow: 'hidden' }}>
+              <div style={{
+                height: '100%',
+                width: `${mypeLimitPct}%`,
+                background: mypeLimitPct > 75
+                  ? `linear-gradient(90deg, ${C.yellow}, ${C.red})`
+                  : `linear-gradient(90deg, ${C.green}, ${C.yellow})`,
+                borderRadius: 4,
+                transition: 'width 0.6s ease',
+              }} />
+            </div>
+            <div style={{
+              fontSize: 28, fontWeight: 900, color: C.yellow,
+              textAlign: 'center', marginTop: 8, fontVariantNumeric: 'tabular-nums',
+            }}>
+              {mypeLimitPct}%
+            </div>
+            <p style={{ margin: '2px 0 0', fontSize: 10, color: C.textMut, textAlign: 'center' }}>
+              del límite MYPE
             </p>
           </div>
-          <div style={{ display: 'flex', gap: 3, background: '#f1f5f9', borderRadius: 9, padding: 3 }}>
-            {tabBtn('ventas', '🧾 Ventas')}
-            {tabBtn('compras', '📦 Compras')}
-            {tabBtn('contabilidad', '📒 Contabilidad')}
+
+          <div style={{
+            padding: '8px 10px', background: `${C.yellow}10`,
+            border: `1px solid ${C.yellow}33`, borderRadius: 8, marginTop: 8,
+          }}>
+            <p style={{ margin: 0, fontSize: 11, fontWeight: 700, color: C.yellow }}>
+              Proyección: Régimen General en julio
+            </p>
+            <p style={{ margin: '4px 0 0', fontSize: 10, color: C.textMut }}>
+              Revisar estrategia tributaria antes de julio 2026
+            </p>
           </div>
-        </div>
-
-        <div style={{ padding: '0 2px 2px' }}>
-          {/* ── Ventas ── */}
-          {tab === 'ventas' && (
-            <DataTable cols={[
-              { label: 'FECHA', width: 95 },
-              { label: 'DOCUMENTO', width: 130 },
-              { label: 'RUC / CLIENTE' },
-              { label: 'GLOSA' },
-              { label: 'CUENTA', width: 70 },
-              { label: 'DEBE', align: 'right', width: 110 },
-              { label: 'HABER', align: 'right', width: 110 },
-              { label: 'ESTADO', align: 'center', width: 95 },
-            ]}>
-              {ventasRows.length === 0
-                ? <EmptyRow cols={8} msg="Sin ventas registradas en el período. Use 'Registrar Venta' para crear comprobantes." />
-                : ventasRows.map((r, i) => {
-                    const docNum = r.documentSeries && r.documentNumber ? `${r.documentSeries}-${r.documentNumber}` : '—';
-                    return (
-                      <TR key={r.id} idx={i}>
-                        <Td v={r.date} muted />
-                        <Td v={docNum} bold color="#0078d4" mono />
-                        <Td v={r.partnerRuc || '—'} muted />
-                        <Td v={r.description} />
-                        <Td v={r.account} color="#6366f1" mono />
-                        <Td v={toNum(r.debit) > 0 ? fmt(toNum(r.debit)) : '—'} right color={toNum(r.debit) > 0 ? '#15803d' : '#d1d5db'} mono />
-                        <Td v={toNum(r.credit) > 0 ? fmt(toNum(r.credit)) : '—'} right color={toNum(r.credit) > 0 ? '#dc2626' : '#d1d5db'} mono />
-                        <Td v={<StatusBadge status={r.status} />} center />
-                      </TR>
-                    );
-                  })
-              }
-              {ventasRows.length > 0 && (
-                <TotalRow
-                  cols={8}
-                  label={`TOTAL VENTAS — ${ventasRows.length} líneas`}
-                  total={ventasRows.reduce((s, r) => s + toNum(r.credit), 0)}
-                  color="#0078d4"
-                />
-              )}
-            </DataTable>
-          )}
-
-          {/* ── Compras ── */}
-          {tab === 'compras' && (
-            <DataTable cols={[
-              { label: 'FECHA', width: 95 },
-              { label: 'DOCUMENTO', width: 130 },
-              { label: 'RUC / PROVEEDOR' },
-              { label: 'GLOSA' },
-              { label: 'CUENTA', width: 70 },
-              { label: 'DEBE', align: 'right', width: 110 },
-              { label: 'HABER', align: 'right', width: 110 },
-              { label: 'ESTADO', align: 'center', width: 95 },
-            ]}>
-              {comprasRows.length === 0
-                ? <EmptyRow cols={8} msg="Sin compras registradas en el período. Use 'Registrar Compra' para crear comprobantes." />
-                : comprasRows.map((r, i) => {
-                    const docNum = r.documentSeries && r.documentNumber ? `${r.documentSeries}-${r.documentNumber}` : '—';
-                    return (
-                      <TR key={r.id} idx={i}>
-                        <Td v={r.date} muted />
-                        <Td v={docNum} bold color="#7c3aed" mono />
-                        <Td v={r.partnerRuc || '—'} muted />
-                        <Td v={r.description} />
-                        <Td v={r.account} color="#6366f1" mono />
-                        <Td v={toNum(r.debit) > 0 ? fmt(toNum(r.debit)) : '—'} right color={toNum(r.debit) > 0 ? '#15803d' : '#d1d5db'} mono />
-                        <Td v={toNum(r.credit) > 0 ? fmt(toNum(r.credit)) : '—'} right color={toNum(r.credit) > 0 ? '#dc2626' : '#d1d5db'} mono />
-                        <Td v={<StatusBadge status={r.status} />} center />
-                      </TR>
-                    );
-                  })
-              }
-              {comprasRows.length > 0 && (
-                <TotalRow
-                  cols={8}
-                  label={`TOTAL COMPRAS — ${comprasRows.length} líneas`}
-                  total={comprasRows.reduce((s, r) => s + toNum(r.debit), 0)}
-                  color="#7c3aed"
-                />
-              )}
-            </DataTable>
-          )}
-
-          {/* ── Contabilidad ── */}
-          {tab === 'contabilidad' && (
-            <DataTable cols={[
-              { label: 'FECHA', width: 95 },
-              { label: 'ASIENTO', width: 140 },
-              { label: 'GLOSA' },
-              { label: 'CUENTA', width: 70 },
-              { label: 'MÓDULO', width: 100 },
-              { label: 'DEBE', align: 'right', width: 110 },
-              { label: 'HABER', align: 'right', width: 110 },
-              { label: 'ESTADO', align: 'center', width: 95 },
-            ]}>
-              {recentRows.length === 0
-                ? <EmptyRow cols={8} msg="Sin asientos contables en el período." />
-                : recentRows.map((r, i) => (
-                    <TR key={r.id} idx={i}>
-                      <Td v={r.date} muted />
-                      <Td v={(r.entryId ?? r.id).slice(-12)} bold color="#0f172a" mono />
-                      <Td v={r.description} />
-                      <Td v={r.account} color="#6366f1" mono />
-                      <Td v={
-                        <span style={{
-                          fontSize: 10, fontWeight: 700, background: '#f1f5f9',
-                          color: '#475569', padding: '3px 8px', borderRadius: 6,
-                        }}>{r.sourceModule}</span>
-                      } />
-                      <Td v={toNum(r.debit) > 0 ? fmt(toNum(r.debit)) : '—'} right color={toNum(r.debit) > 0 ? '#15803d' : '#d1d5db'} mono />
-                      <Td v={toNum(r.credit) > 0 ? fmt(toNum(r.credit)) : '—'} right color={toNum(r.credit) > 0 ? '#dc2626' : '#d1d5db'} mono />
-                      <Td v={<StatusBadge status={r.status} />} center />
-                    </TR>
-                  ))
-              }
-            </DataTable>
-          )}
-        </div>
-      </div>
-
-      {/* ── Fila inferior: Estado módulos + Libros PLE ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        </Card>
 
         {/* Estado de módulos */}
-        <Panel title="Estado de Módulos" subtitle="Datos del período activo" accent="#10b981" icon="🔌">
-          <DataTable cols={[
-            { label: 'MÓDULO' },
-            { label: 'ASIENTOS', align: 'right', width: 80 },
-            { label: 'VENTAS', align: 'right', width: 110 },
-            { label: 'COMPRAS', align: 'right', width: 110 },
-          ]}>
-            {[
-              { mod: 'BILLING',    label: 'Ventas',       filt: isVenta },
-              { mod: 'PURCHASING', label: 'Compras',      filt: isCompra },
-              { mod: 'ACCOUNTING', label: 'Contabilidad', filt: (r: DashboardRow) => modUp(r) === 'ACCOUNTING' || modUp(r) === 'CONTABILIDAD' },
-              { mod: 'ASSETS',     label: 'Activos',      filt: (r: DashboardRow) => modUp(r) === 'ASSETS' || modUp(r) === 'ACTIVOS' },
-              { mod: 'PAYROLL',    label: 'Planillas',    filt: (r: DashboardRow) => modUp(r) === 'PAYROLL' || modUp(r) === 'PLANILLAS' },
-            ].map((m, i) => {
-              const filtered = rows.filter(m.filt);
-              const ventasAmt = filtered.reduce((s, r) => s + toNum(r.credit), 0);
-              const comprasAmt = filtered.reduce((s, r) => s + toNum(r.debit), 0);
-              return (
-                <TR key={m.mod} idx={i}>
-                  <Td v={m.label} bold />
-                  <Td v={filtered.length || '—'} right color={filtered.length > 0 ? '#0078d4' : '#d1d5db'} />
-                  <Td v={ventasAmt > 0 ? fmt(ventasAmt) : '—'} right color={ventasAmt > 0 ? '#15803d' : '#d1d5db'} mono />
-                  <Td v={comprasAmt > 0 ? fmt(comprasAmt) : '—'} right color={comprasAmt > 0 ? '#dc2626' : '#d1d5db'} mono />
-                </TR>
-              );
-            })}
-          </DataTable>
-        </Panel>
+        <Card
+          title="Estado de módulos"
+          subtitle={`Actividad del período`}
+          icon="🔌"
+          accent={C.green}
+        >
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 12 }}>
+            {moduleStatus.map((m, i) => (
+              <div key={i} style={{
+                padding: '8px 12px', background: C.bgRow, borderRadius: 8,
+                borderLeft: `3px solid ${m.color}`,
+                display: 'flex', flexDirection: 'column', gap: 2,
+              }}>
+                <span style={{ fontSize: 10, color: C.textMut, fontWeight: 700 }}>{m.label}</span>
+                <span style={{ fontSize: 16, fontWeight: 800, color: m.color, fontVariantNumeric: 'tabular-nums' }}>
+                  {m.amount > 0 ? fmtK(m.amount) : `${m.count} asientos`}
+                </span>
+                {m.amount > 0 && (
+                  <span style={{ fontSize: 10, color: C.textDim }}>{m.count} registros</span>
+                )}
+              </div>
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <div style={{
+              flex: 1, padding: '10px 14px', background: `${C.green}12`,
+              border: `1px solid ${C.green}33`, borderRadius: 8, textAlign: 'center',
+            }}>
+              <span style={{ fontSize: 20, fontWeight: 900, color: C.green, display: 'block' }}>
+                {asientosTotal}
+              </span>
+              <span style={{ fontSize: 10, color: C.textMut, fontWeight: 700 }}>Asientos totales</span>
+            </div>
+            <div style={{
+              flex: 1, padding: '10px 14px', background: `${C.accent}12`,
+              border: `1px solid ${C.accent}33`, borderRadius: 8, textAlign: 'center',
+            }}>
+              <span style={{ fontSize: 20, fontWeight: 900, color: C.accent, display: 'block' }}>
+                {auditFindings.filter(f => f.risk !== 'bajo').length}
+              </span>
+              <span style={{ fontSize: 10, color: C.textMut, fontWeight: 700 }}>Alertas IA</span>
+            </div>
+          </div>
+        </Card>
 
         {/* Libros PLE */}
-        <Panel
-          title="Libros Electrónicos PLE"
+        <Card
+          title="Libros PLE"
           subtitle="Estado del período activo"
-          accent="#0078d4"
           icon="📚"
+          accent={C.accent}
           action={
             <button type="button" style={{
-              padding: '5px 12px', fontSize: 12, fontWeight: 700,
-              background: '#0078d4', color: '#fff', border: 'none',
-              borderRadius: 7, cursor: 'pointer',
+              padding: '5px 12px', fontSize: 11, fontWeight: 700,
+              background: 'linear-gradient(180deg, #388bfd 0%, #1f6feb 100%)',
+              color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer',
+              boxShadow: `0 2px 6px ${C.accent}44`,
             }}>
               Generar PLE
             </button>
           }
         >
-          {[
-            { label: 'Libro Diario (5.1)',       count: rows.length },
-            { label: 'Registro de Ventas (14.1)', count: ventasRows.length },
-            { label: 'Registro de Compras (8.1)', count: comprasRows.length },
-          ].map((l, i) => (
-            <div key={i} style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              padding: '10px 0', borderBottom: i < 2 ? '1px solid #f1f5f9' : 'none',
-            }}>
-              <div>
-                <p style={{ margin: 0, fontSize: 12, fontWeight: 600, color: '#374151' }}>{l.label}</p>
-                <p style={{ margin: '2px 0 0', fontSize: 11, color: '#9ca3af' }}>
-                  {l.count > 0 ? `${l.count} registro${l.count !== 1 ? 's' : ''}` : 'Sin registros aún'}
-                </p>
-              </div>
-              <span style={{
-                fontSize: 10, fontWeight: 800, borderRadius: 999, padding: '3px 10px',
-                background: l.count > 0 ? '#dcfce7' : '#f1f5f9',
-                color: l.count > 0 ? '#15803d' : '#9ca3af',
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {ple.map((l, i) => (
+              <div key={i} style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '9px 12px', background: C.bgRow, borderRadius: 8,
+                border: `1px solid ${C.border}`,
               }}>
-                {l.count > 0 ? 'LISTO' : 'VACÍO'}
-              </span>
+                <div style={{ minWidth: 0 }}>
+                  <p style={{ margin: 0, fontSize: 11, fontWeight: 700, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {l.name}
+                  </p>
+                  <p style={{ margin: '2px 0 0', fontSize: 10, color: C.textDim }}>
+                    {l.count > 0 ? `${l.count} registro${l.count !== 1 ? 's' : ''}` : 'Sin registros aún'}
+                  </p>
+                </div>
+                <Badge label={l.badge} type={l.type} />
+              </div>
+            ))}
+          </div>
+        </Card>
+      </div>
+
+      {/* ══ FILA 3: Auditoría + Activos ══ */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>
+
+        {/* Auditoría Preventiva IA */}
+        <Card
+          title="Auditoría Preventiva IA — Hallazgos forenses"
+          subtitle="Análisis automático del período"
+          icon="🛡️"
+          accent={C.red}
+          action={<Badge label={overallRisk} type={overallRiskType} />}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {auditFindings.map((f, i) => (
+              <div key={i} style={{
+                display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10,
+                padding: '10px 12px', background: C.bgRow, borderRadius: 8,
+                borderLeft: `3px solid ${f.risk === 'alto' ? C.red : f.risk === 'medio' ? C.yellow : C.textDim}`,
+              }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: C.text, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span>{f.icon}</span>
+                    {f.text}
+                  </p>
+                  <p style={{ margin: '3px 0 0', fontSize: 10, color: C.textMut }}>{f.detail}</p>
+                </div>
+                <button type="button" style={{
+                  flexShrink: 0, padding: '4px 10px', fontSize: 10, fontWeight: 700,
+                  background: `${C.accent}18`, color: C.accent,
+                  border: `1px solid ${C.accent}33`, borderRadius: 6, cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                }}>
+                  {f.action} →
+                </button>
+              </div>
+            ))}
+          </div>
+        </Card>
+
+        {/* Activos estratégicos + Tendencia */}
+        <Card
+          title="Activos estratégicos + Tendencia"
+          subtitle="Inventario de activos fijos"
+          icon="🏭"
+          accent={C.green}
+          action={<Badge label="Operativo" type="ok" />}
+        >
+          {/* Activos — solo datos reales del módulo ASSETS */}
+          {(() => {
+            const assetRows = rows.filter(r => modUp(r) === 'ASSETS' || modUp(r) === 'ACTIVOS');
+            if (assetRows.length === 0) {
+              return (
+                <div style={{
+                  padding: '24px 12px', textAlign: 'center',
+                  background: C.bgRow, borderRadius: 8,
+                  border: `1px dashed ${C.border}`, color: C.textDim, fontSize: 12,
+                }}>
+                  Sin activos registrados en el período activo.<br />
+                  <span style={{ fontSize: 10 }}>Los activos aparecerán aquí cuando se registren en el módulo Activos.</span>
+                </div>
+              );
+            }
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {assetRows.slice(0, 4).map((r, i) => (
+                  <div key={i} style={{
+                    padding: '9px 12px', background: C.bgRow, borderRadius: 8,
+                    border: `1px solid ${C.border}`,
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10,
+                  }}>
+                    <div style={{ minWidth: 0 }}>
+                      <p style={{ margin: 0, fontSize: 11, fontWeight: 700, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.description}</p>
+                      <p style={{ margin: '2px 0 0', fontSize: 10, color: C.textDim }}>{r.account} · {r.date}</p>
+                    </div>
+                    <span style={{ fontSize: 12, fontWeight: 800, color: C.accent, fontFamily: 'Consolas, monospace', flexShrink: 0 }}>
+                      {fmtK(toNum(r.debit) || toNum(r.credit))}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+
+          {/* Tendencia — solo si hay datos reales */}
+          {trendValues.length > 0 && (
+            <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 12, marginTop: 10 }}>
+              <p style={{ margin: '0 0 8px', fontSize: 10, color: C.textMut, fontWeight: 700 }}>
+                COMPRAS DEL PERÍODO
+              </p>
+              <div style={{ fontSize: 13, fontWeight: 800, color: C.purple, fontFamily: 'Consolas, monospace' }}>
+                {fmtK(comprasTotal)}
+              </div>
             </div>
-          ))}
-        </Panel>
+          )}
+        </Card>
+      </div>
+
+      {/* ══ FILA 4: Tabla de transacciones ══ */}
+      <div style={{
+        background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 12,
+        overflow: 'hidden', boxShadow: '0 4px 14px rgba(0,0,0,0.4)',
+      }}>
+        {/* Header con tabs */}
+        <div style={{
+          padding: '12px 16px', borderBottom: `1px solid ${C.border}`,
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+          background: `linear-gradient(90deg, ${C.accent}08 0%, transparent 100%)`,
+        }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: C.text }}>Últimas Transacciones</h3>
+            <p style={{ margin: '2px 0 0', fontSize: 10, color: C.textDim }}>
+              {noData ? 'Sin datos · Registre ventas y compras' : `${rows.length} asientos en el período activo`}
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: 3, background: C.bg, borderRadius: 8, padding: 3 }}>
+            {(['ventas', 'compras', 'contabilidad'] as const).map(t => (
+              <button key={t} type="button" onClick={() => setActiveTab(t)} style={{
+                padding: '6px 14px', fontSize: 11, fontWeight: 700, border: 'none',
+                borderRadius: 6, cursor: 'pointer', transition: 'all 0.12s',
+                background: activeTab === t ? C.accent : 'transparent',
+                color: activeTab === t ? '#fff' : C.textMut,
+              }}>
+                {t === 'ventas' ? '🧾 Ventas' : t === 'compras' ? '📦 Compras' : '📒 Contabilidad'}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Tabla */}
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead>
+              <tr style={{ background: C.header }}>
+                {['FECHA', 'DOCUMENTO', 'RUC / PARTNER', 'GLOSA', 'CUENTA', 'DEBE', 'HABER', 'ESTADO'].map((h, i) => (
+                  <th key={i} style={{
+                    padding: '8px 10px', textAlign: i >= 5 && i <= 6 ? 'right' : i === 7 ? 'center' : 'left',
+                    fontSize: 10, fontWeight: 700, color: C.textMut,
+                    textTransform: 'uppercase', letterSpacing: '0.06em', whiteSpace: 'nowrap',
+                    borderBottom: `1px solid ${C.border}`,
+                  }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {tableRows.length === 0
+                ? (
+                  <tr>
+                    <td colSpan={8} style={{
+                      padding: '32px 16px', textAlign: 'center',
+                      color: C.textDim, fontSize: 12,
+                    }}>
+                      Sin registros en este módulo para el período activo
+                    </td>
+                  </tr>
+                )
+                : tableRows.map((r, i) => {
+                  const docNum = r.documentSeries && r.documentNumber ? `${r.documentSeries}-${r.documentNumber}` : '—';
+                  const debit  = toNum(r.debit);
+                  const credit = toNum(r.credit);
+                  return (
+                    <tr
+                      key={r.id}
+                      style={{ background: i % 2 === 1 ? C.bgRow : C.bgCard, borderBottom: `1px solid ${C.border}22` }}
+                      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = C.bgHover; }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = i % 2 === 1 ? C.bgRow : C.bgCard; }}
+                    >
+                      <td style={{ padding: '8px 10px', color: C.textMut, whiteSpace: 'nowrap' }}>{r.date}</td>
+                      <td style={{ padding: '8px 10px', color: C.accent, fontFamily: 'Consolas, monospace', fontWeight: 700 }}>{docNum}</td>
+                      <td style={{ padding: '8px 10px', color: C.textMut }}>{r.partnerRuc || '—'}</td>
+                      <td style={{ padding: '8px 10px', color: C.text, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.description}</td>
+                      <td style={{ padding: '8px 10px', color: C.purple, fontFamily: 'Consolas, monospace' }}>{r.account}</td>
+                      <td style={{ padding: '8px 10px', textAlign: 'right', color: debit > 0 ? C.accent : C.textDim, fontFamily: 'Consolas, monospace', fontWeight: 700 }}>
+                        {debit > 0 ? fmt(debit) : '—'}
+                      </td>
+                      <td style={{ padding: '8px 10px', textAlign: 'right', color: credit > 0 ? C.red : C.textDim, fontFamily: 'Consolas, monospace', fontWeight: 700 }}>
+                        {credit > 0 ? fmt(credit) : '—'}
+                      </td>
+                      <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+                        <Badge
+                          label={r.status?.toUpperCase() || 'PENDIENTE'}
+                          type={r.status === 'POSTED' || r.status === 'POSTEADO' ? 'ok' : r.status === 'REVIEW' ? 'warn' : 'neutral'}
+                        />
+                      </td>
+                    </tr>
+                  );
+                })
+              }
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

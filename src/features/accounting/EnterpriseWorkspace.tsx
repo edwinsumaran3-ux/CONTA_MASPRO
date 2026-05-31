@@ -29,6 +29,7 @@ import { PurchaseFormEnterprise, type PurchaseSubmitPayload } from './PurchaseFo
 import { CompliancePanel } from '../sunat/CompliancePanel';
 import { SunatMonitor } from '../sunat/SunatMonitor';
 import { AuditHealthDashboard } from '../audit/AuditHealthDashboard';
+import { ComprasEnhanced } from './ComprasEnhanced';
 import { PayrollGrid } from '../payroll/PayrollGrid';
 import { AssetRegister } from '../assets/AssetRegister';
 import { FinancialDashboard } from '../reports/FinancialDashboard';
@@ -598,10 +599,19 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
     return accessToken;
   };
 
+  /** Verifica tenant Y expiración; renueva si el token está vencido o por vencer */
   const getValidToken = async (candidate?: string | null) => {
     const tenantId = getTenantId();
     if (candidate && tokenTenantId(candidate) === tenantId) {
-      return candidate;
+      // Verificar expiración: si vence en menos de 60 s, renovar
+      try {
+        const parts = candidate.split('.');
+        if (parts.length === 3) {
+          const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+          const expMs = (payload.exp || 0) * 1000;
+          if (expMs > Date.now() + 60_000) return candidate; // aún válido
+        }
+      } catch { /* token malformado → renovar */ }
     }
     const generated = await requestDevToken();
     setToken(generated);
@@ -1191,7 +1201,51 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
       return <PayrollGrid apiBase={HR_API_BASE} token={token} tenantId={getTenantId()} onStatus={setStatusMessage} onJournalPosted={refreshJournal} />;
     }
     if (selectedView === 'compras') {
-      return <AuditHealthDashboard />;
+      // Agrupar filas del diario por entryId para reconstruir comprobantes reales
+      const comprasRows = rows.filter(r => {
+        const mod = String(r.sourceModule ?? '').toUpperCase();
+        return mod === 'PURCHASING' || mod === 'COMPRAS';
+      });
+      // Agrupar por entryId → un comprobante por asiento
+      const entryMap = new Map<string, typeof comprasRows[number][]>();
+      comprasRows.forEach(r => {
+        const key = r.entryId || r.id;
+        if (!entryMap.has(key)) entryMap.set(key, []);
+        entryMap.get(key)!.push(r);
+      });
+      const comprobantesReales = Array.from(entryMap.entries()).map(([eid, lines]) => {
+        const first  = lines[0];
+        const debit  = lines.reduce((s, l) => s + toNumber(l.debit), 0);
+        const credit = lines.reduce((s, l) => s + toNumber(l.credit), 0);
+        const igvLine = lines.find(l => String(l.account ?? '').startsWith('40'));
+        const igv    = igvLine ? toNumber(igvLine.debit) || toNumber(igvLine.credit) : 0;
+        const base   = Math.max(debit, credit) - igv;
+        const doc = first.documentSeries && first.documentNumber
+          ? `${first.documentSeries}-${first.documentNumber}` : eid.slice(-8);
+        return {
+          id:        eid,
+          fecha:     first.date,
+          proveedor: first.description || 'Proveedor',
+          ruc:       first.partnerRuc  || '—',
+          documento: doc,
+          base:      Math.max(0, base),
+          igv:       Math.max(0, igv),
+          total:     Math.max(debit, credit),
+          cuenta:    first.account?.slice(0, 2) || '60',
+          estado:    (first.status === 'REVIEW' ? 'ATIPICO' : first.status === 'POSTED' || first.status === 'POSTEADO' ? 'OK' : 'PENDIENTE') as 'OK' | 'ATIPICO' | 'DUPLICADO' | 'PENDIENTE',
+        };
+      });
+      return (
+        <ComprasEnhanced
+          apiBase={API_BASE}
+          token={token}
+          tenantId={getTenantId()}
+          onStatus={setStatusMessage}
+          onRegisterCompra={() => setActivePanel('COMPRA')}
+          onAuditoriaIA={() => setStatusMessage('Auditoría IA activa — analizando comprobantes...')}
+          comprobantes={comprobantesReales}
+        />
+      );
     }
 
     if (selectedView === 'contabilidad') {

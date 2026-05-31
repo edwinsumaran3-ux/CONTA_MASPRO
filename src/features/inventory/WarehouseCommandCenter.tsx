@@ -296,24 +296,24 @@ function stockStatus(qty: number, min: number, max: number): 'critical' | 'low' 
 // ESTILOS INLINE (tema oscuro enterprise)
 // ============================================================
 const C = {
-  bg:       '#0d1117',
-  bgCard:   '#161b22',
-  bgRow:    '#1c2128',
-  bgRowAlt: '#1a1f27',
-  bgHover:  '#21262d',
-  bgSel:    '#1f3a5f',
-  border:   '#30363d',
-  borderFoc:'#388bfd',
-  text:     '#e6edf3',
-  textMut:  '#8b949e',
-  textDim:  '#6e7681',
-  accent:   '#58a6ff',
-  accentG:  '#3fb950',
-  accentR:  '#f85149',
-  accentY:  '#d29922',
-  accentO:  '#db6d28',
-  header:   '#010409',
-  topbar:   '#161b22',
+  bg:       '#050d1a',
+  bgCard:   '#0b1a30',
+  bgRow:    '#0d1f38',
+  bgRowAlt: '#0a1a32',
+  bgHover:  '#122647',
+  bgSel:    '#1a3a6b',
+  border:   '#1e3a5f',
+  borderFoc:'#3b82f6',
+  text:     '#e8f0fe',
+  textMut:  '#7da3c4',
+  textDim:  '#4d7a9e',
+  accent:   '#60a5fa',
+  accentG:  '#22c55e',
+  accentR:  '#ef4444',
+  accentY:  '#f59e0b',
+  accentO:  '#f97316',
+  header:   '#030810',
+  topbar:   '#0b1a30',
 };
 
 const MODAL_OVERLAY: React.CSSProperties = {
@@ -666,18 +666,43 @@ export default function WarehouseCommandCenter({ apiBase = '/api/v1', token = ''
 
   const say = (msg: string) => onStatus?.(msg);
 
+  // ── Obtener token fresco (renueva si el actual venció — responde 401) ──────
+  const getFreshToken = useCallback(async (currentToken: string): Promise<string> => {
+    // Verificar expiración decodificando el JWT (sin librería)
+    try {
+      const payload = JSON.parse(atob(currentToken.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+      const expMs = (payload.exp || 0) * 1000;
+      if (expMs > Date.now() + 30_000) return currentToken; // aún válido (30 s de margen)
+    } catch { /* token malformado → renovar */ }
+    // Renovar
+    const r = await fetch(`${apiBase}/auth/dev-token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tenant_id: tenantId, user_id: 'erp.operator', role: 'ADMIN' }),
+    });
+    if (!r.ok) return currentToken; // si falla el refresh, retornar el original
+    const data = await r.json();
+    return String(data.access_token || currentToken);
+  }, [apiBase, tenantId]);
+
   // ── fetch data ──────────────────────────────────────────────
   const loadData = useCallback(async () => {
     if (!token || !tenantId) return;
     setLoading(true);
     try {
-      const hdrs = { Authorization: `Bearer ${token}`, 'X-Tenant-Id': tenantId };
+      const activeToken = await getFreshToken(token);
+      const hdrs = { Authorization: `Bearer ${activeToken}`, 'X-Tenant-Id': tenantId };
       const [balRes, movRes, whRes, pendingRes] = await Promise.all([
         fetch(`${apiBase}/inventory/balances`, { headers: hdrs }),
         fetch(`${apiBase}/inventory/movements?limit=300`, { headers: hdrs }),
         fetch(`${apiBase}/inventory/warehouses`, { headers: hdrs }),
         fetch(`${apiBase}/inventory/pending-purchases?limit=100`, { headers: hdrs }),
       ]);
+      // Si cualquier respuesta es 401, abortar silenciosamente (se reintenta en el siguiente ciclo)
+      if ([balRes, movRes, whRes, pendingRes].some(r => r.status === 401)) {
+        say('Almacén: sesión expirada, reconectando...');
+        return;
+      }
       // Siempre reemplazar con datos reales del backend (limpia estado local sucio)
       if (balRes.ok)  { const d = await balRes.json();  if (Array.isArray(d)) setItems(d); }
       if (movRes.ok)  { const d = await movRes.json();  if (Array.isArray(d)) setMovements(d); }
@@ -728,7 +753,7 @@ export default function WarehouseCommandCenter({ apiBase = '/api/v1', token = ''
     } finally {
       setLoading(false);
     }
-  }, [apiBase, token, tenantId]);
+  }, [apiBase, token, tenantId, getFreshToken]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
