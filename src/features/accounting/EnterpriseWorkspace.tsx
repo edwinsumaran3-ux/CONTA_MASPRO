@@ -157,19 +157,17 @@ type QuickFilters = {
 
 const API_BASE = '/api/v1';
 const HR_API_BASE = API_BASE;
-const TENANT_ID = '11111111-1111-1111-1111-111111111111';
 const USER_ID = 'erp.operator';
 const MAX_JOURNAL_ROWS = 3000;
 const MAX_RENDER_ROWS = 1200;
 const _today = new Date();
 const DEFAULT_PERIOD = { year: _today.getFullYear(), month: _today.getMonth() + 1 };
 
-const getTenantId = () => {
-  const current = localStorage.getItem('tenant_id');
-  if (current !== TENANT_ID) {
-    localStorage.setItem('tenant_id', TENANT_ID);
-  }
-  return TENANT_ID;
+// Deriva un UUID estable a partir del RUC de la empresa activa
+const rucToTenantId = (ruc: string): string => {
+  if (!ruc) return '00000000-0000-0000-0000-000000000000';
+  const padded = ruc.replace(/\D/g, '').padEnd(20, '0').slice(0, 20);
+  return `${padded.slice(0,8)}-${padded.slice(8,12)}-4${padded.slice(12,15)}-8${padded.slice(15,18)}-${padded.slice(8,20)}`;
 };
 
 const tokenTenantId = (value?: string | null) => {
@@ -327,6 +325,9 @@ export const EnterpriseWorkspace = ({ userRole = 'ADMIN', userPlan = 'PREMIUM' }
 
   const [rows, setRows] = useState<JournalRow[]>([]);
   const [selectedRow, setSelectedRow] = useState<JournalRow>(emptyJournalRow);
+  const { currentCompany } = useTenantStore();
+  const getTenantId = () => rucToTenantId(currentCompany.ruc);
+
   const [token, setToken] = useState('');
   const [loading, setLoading] = useState(true);
   const [railExpanded, setRailExpanded] = useState(false);
@@ -708,7 +709,7 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
     });
   }, [rows, entriesIndex]);
 
-  const authHeaders = (bearerToken: string, tenantId = TENANT_ID) => ({
+  const authHeaders = (bearerToken: string, tenantId = getTenantId()) => ({
     Authorization: `Bearer ${bearerToken}`,
     'X-Tenant-Id': tenantId,
     'Content-Type': 'application/json',
@@ -895,6 +896,21 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
       void getValidToken(null);
     }
   }, [token]);
+
+  // Recargar datos limpios cuando cambia la empresa activa
+  useEffect(() => {
+    if (!currentCompany?.ruc) return;
+    setRows([]);
+    setSelectedRow(emptyJournalRow);
+    setStatusMessage(`Cargando datos de ${currentCompany.businessName}...`);
+    if (token) {
+      loadJournal(token, selectedYear).catch(() => {
+        setRows([]);
+        setStatusMessage(`Sin datos para ${currentCompany.businessName}. Registra ventas y compras.`);
+      });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentCompany.id]);
 
   // Auto-refresco del libro diario: polling 60s + visibilitychange + foco de ventana
   // IMPORTANTE: funciona incluso cuando token está vacío (bootstrap falló por backend apagado)
@@ -1332,7 +1348,7 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
       );
     }
     if (selectedView === 'libros') {
-      return <BooksCenter apiBase={API_BASE} tenantId={TENANT_ID} />;
+      return <BooksCenter apiBase={API_BASE} tenantId={getTenantId()} />;
     }
     if (selectedView === 'declaracion') {
       return (

@@ -29,12 +29,22 @@ const PLACEHOLDER: Company = {
   rubros: ['GE'],
 };
 
+const DEMO_IDS = new Set(['tenant-demo', 'tenant-lima', 'tenant-norte']);
+
 const loadCompanies = (): Company[] => {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as Company[];
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        // Filtrar empresas demo hardcodeadas de versiones anteriores
+        const real = parsed.filter(c => !DEMO_IDS.has(c.id));
+        if (real.length !== parsed.length) {
+          // Había demos: guardar versión limpia
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(real));
+        }
+        return real;
+      }
     }
   } catch { /* ignore */ }
   return [];
