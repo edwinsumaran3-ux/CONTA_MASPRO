@@ -42,7 +42,8 @@ type Step =
   | 'PLAN_COMPANY'
   | 'RUBRO'
   | 'API_CONFIG'
-  | 'CONFIRM';
+  | 'CONFIRM'
+  | 'ADD_COMPANY';
 
 type AccountType = 'ACCOUNTANT' | 'COMPANY' | null;
 
@@ -152,7 +153,7 @@ const card: React.CSSProperties = {
 // ─── Indicador de pasos ─────────────────────────────────────────────────────
 const stepMap: Record<Step, number> = {
   LANDING: 0, LOGIN: 0, REG_TYPE: 1, REG_ACCOUNTANT: 2, REG_COMPANY: 2,
-  PLAN_ACCOUNTANT: 3, PLAN_COMPANY: 3, RUBRO: 4, API_CONFIG: 5, CONFIRM: 6,
+  PLAN_ACCOUNTANT: 3, PLAN_COMPANY: 3, RUBRO: 4, API_CONFIG: 5, CONFIRM: 6, ADD_COMPANY: 7,
 };
 
 const StepDots = ({ current }: { current: number }) => (
@@ -1144,7 +1145,6 @@ export const LoginScreen: React.FC<Props> = ({ onLogin }) => {
             <button type="button" onClick={() => {
               const { addCompany } = useTenantStore.getState();
               if (accountType === 'COMPANY' && compData.ruc && compData.razonSocial) {
-                // Empresa registra su propia empresa como tenant
                 const rubroMap: Record<string, Rubro> = {
                   COMERCIAL: 'CO', SERVICIOS: 'GE', CONSTRUCCION: 'CM',
                   FABRICACION: 'FA', MINERIA: 'MI', OTRO: 'GE',
@@ -1156,16 +1156,142 @@ export const LoginScreen: React.FC<Props> = ({ onLogin }) => {
                   rubro: rubroMap[selectedRubro] ?? 'GE',
                   rubros: [rubroMap[selectedRubro] ?? 'GE'],
                 });
+                onLogin('ACCOUNTANT', compData.razonSocial || 'Empresa', selectedPlan || 'PLUS_EMPRESA');
+              } else {
+                // CONTADOR → primero registra sus empresas cliente
+                setStep('ADD_COMPANY');
               }
-              // Contadores empiezan sin empresas — las agregan desde el workspace
-              onLogin('ACCOUNTANT', accountType === 'ACCOUNTANT' ? `${acctData.nombres} ${acctData.apellidos}`.trim() || 'Contador' : compData.razonSocial || 'Empresa', selectedPlan || 'TRIAL_CONTADOR');
             }} style={btn(planColors[selectedPlan] || P.accent)}>
-              {isMaestro ? '📩 Enviar solicitud y entrar al sistema' : '✅ Activar cuenta y entrar al sistema'}
+              {isMaestro ? '📩 Enviar solicitud y continuar' : '✅ Activar cuenta y continuar'}
             </button>
 
             <button type="button" onClick={() => setStep(accountType === 'ACCOUNTANT' ? 'PLAN_ACCOUNTANT' : 'RUBRO')} style={{ ...btn(P.accent, true), marginTop: 10 }}>
               ← Modificar
             </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── AGREGAR EMPRESAS CLIENTE (solo CONTADOR) ─────────────────────────────
+  if (step === 'ADD_COMPANY') {
+    const { companies, addCompany } = useTenantStore.getState();
+    const [newRuc, setNewRuc] = React.useState('');
+    const [newNombre, setNewNombre] = React.useState('');
+    const [newRubro, setNewRubro] = React.useState('COMERCIAL');
+    const [addError, setAddError] = React.useState('');
+
+    const RUBROS_LISTA = [
+      { id: 'COMERCIAL', label: 'Comercial', icon: '🏪', rCode: 'CO' as Rubro },
+      { id: 'SERVICIOS', label: 'Servicios', icon: '💼', rCode: 'GE' as Rubro },
+      { id: 'CONSTRUCCION', label: 'Construcción', icon: '🏗️', rCode: 'CM' as Rubro },
+      { id: 'FABRICACION', label: 'Fabricación', icon: '🏭', rCode: 'FA' as Rubro },
+      { id: 'MINERIA', label: 'Minería', icon: '⛏️', rCode: 'MI' as Rubro },
+      { id: 'OTRO', label: 'Otro', icon: '✨', rCode: 'GE' as Rubro },
+    ];
+
+    const handleAddEmpresa = () => {
+      if (!newRuc.trim() || newRuc.trim().length < 11) { setAddError('El RUC debe tener 11 dígitos.'); return; }
+      if (!newNombre.trim()) { setAddError('Ingresa la razón social.'); return; }
+      const r = RUBROS_LISTA.find(x => x.id === newRubro);
+      addCompany({ id: `tenant-${Date.now()}`, ruc: newRuc.trim(), businessName: newNombre.trim(), rubro: r?.rCode ?? 'GE', rubros: [r?.rCode ?? 'GE'] });
+      setNewRuc(''); setNewNombre(''); setNewRubro('COMERCIAL'); setAddError('');
+    };
+
+    const currentCompanies = useTenantStore.getState().companies;
+    const displayName = `${acctData.nombres} ${acctData.apellidos}`.trim() || 'Contador';
+
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Segoe UI', Arial, sans-serif", position: 'relative', overflow: 'hidden', padding: '20px' }}>
+        <Background />
+        <div style={{ width: '100%', maxWidth: 620, position: 'relative', zIndex: 1 }}>
+          <Logo3D size={48} />
+          <StepDots current={7} />
+          <div style={{ ...card, padding: '28px 32px', boxShadow: `0 32px 80px rgba(0,0,0,0.6), 0 0 0 1px ${P.border}` }}>
+
+            <div style={{ textAlign: 'center', marginBottom: 22 }}>
+              <div style={{ fontSize: 40, marginBottom: 6 }}>🏢</div>
+              <h2 style={{ color: P.text, fontSize: 18, fontWeight: 800, margin: '0 0 4px' }}>
+                Registra tus empresas cliente
+              </h2>
+              <p style={{ color: P.dim, fontSize: 12, margin: 0 }}>
+                Hola <strong style={{ color: P.accent }}>{displayName}</strong> — agrega las empresas cuya contabilidad llevarás.
+                Puedes agregar más desde el workspace cuando quieras.
+              </p>
+            </div>
+
+            {/* Formulario agregar empresa */}
+            <div style={{ background: 'rgba(56,189,248,0.05)', border: `1px solid ${P.border}`, borderRadius: 12, padding: '16px 18px', marginBottom: 16 }}>
+              <p style={{ margin: '0 0 12px', color: P.accent, fontSize: 12, fontWeight: 700 }}>+ Nueva empresa cliente</p>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: 10, color: P.muted, marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.06em' }}>RUC (11 dígitos)</label>
+                  <input value={newRuc} onChange={e => { setNewRuc(e.target.value); setAddError(''); }}
+                    placeholder="20XXXXXXXXX" maxLength={11}
+                    style={{ ...input(false), fontSize: 13, fontFamily: 'Consolas, monospace' }} />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: 10, color: P.muted, marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Razón social</label>
+                  <input value={newNombre} onChange={e => { setNewNombre(e.target.value); setAddError(''); }}
+                    placeholder="EMPRESA SAC"
+                    style={{ ...input(false), fontSize: 13 }} />
+                </div>
+              </div>
+              <div style={{ marginBottom: 10 }}>
+                <label style={{ display: 'block', fontSize: 10, color: P.muted, marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Rubro</label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {RUBROS_LISTA.map(r => (
+                    <button key={r.id} type="button" onClick={() => setNewRubro(r.id)} style={{
+                      padding: '5px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600,
+                      cursor: 'pointer', fontFamily: "'Segoe UI', Arial, sans-serif",
+                      background: newRubro === r.id ? `${P.accent}22` : 'transparent',
+                      border: `1px solid ${newRubro === r.id ? P.accent : P.border}`,
+                      color: newRubro === r.id ? P.accent : P.muted,
+                    }}>{r.icon} {r.label}</button>
+                  ))}
+                </div>
+              </div>
+              {addError && <p style={{ margin: '0 0 8px', color: P.red, fontSize: 11 }}>⚠ {addError}</p>}
+              <button type="button" onClick={handleAddEmpresa} style={{ ...btn(P.blue), padding: '9px 20px', fontSize: 12 }}>
+                + Agregar empresa
+              </button>
+            </div>
+
+            {/* Lista de empresas agregadas */}
+            {currentCompanies.length > 0 && (
+              <div style={{ marginBottom: 16 }}>
+                <p style={{ margin: '0 0 8px', color: P.muted, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                  Empresas registradas ({currentCompanies.length})
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {currentCompanies.map(c => (
+                    <div key={c.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: `${P.green}10`, border: `1px solid ${P.green}33`, borderRadius: 8, padding: '8px 14px' }}>
+                      <div>
+                        <span style={{ color: P.text, fontSize: 12, fontWeight: 700 }}>{c.businessName}</span>
+                        <span style={{ color: P.dim, fontSize: 11, marginLeft: 8 }}>RUC {c.ruc}</span>
+                      </div>
+                      <span style={{ color: P.green, fontSize: 11, fontWeight: 700 }}>✓</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <button
+              type="button"
+              disabled={currentCompanies.length === 0}
+              onClick={() => onLogin('ACCOUNTANT', displayName, selectedPlan || 'TRIAL_CONTADOR')}
+              style={{ ...btn(currentCompanies.length > 0 ? P.green : P.dim), opacity: currentCompanies.length > 0 ? 1 : 0.4, cursor: currentCompanies.length > 0 ? 'pointer' : 'not-allowed' }}
+            >
+              {currentCompanies.length > 0
+                ? `✅ Entrar al sistema con ${currentCompanies.length} empresa${currentCompanies.length > 1 ? 's' : ''}`
+                : 'Agrega al menos una empresa para continuar'}
+            </button>
+
+            <p style={{ textAlign: 'center', color: P.dim, fontSize: 11, marginTop: 10 }}>
+              Puedes agregar más empresas desde el workspace en cualquier momento.
+            </p>
           </div>
         </div>
       </div>
