@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { PlanSelectorModal } from '../../components/PlanSelectorModal';
+import type { PlanSelected } from '../../components/PlanSelectorModal';
 
 // ─── Tipos globales Google GSI + OAuth2 ────────────────────────────────────
 declare global {
@@ -167,6 +169,8 @@ export const LoginScreen: React.FC<Props> = ({ onLogin }) => {
   const [step, setStep] = useState<Step>('LANDING');
   const [accountType, setAccountType] = useState<AccountType>(null);
   const [selectedPlan, setSelectedPlan] = useState('');
+  const [selectedPlanName, setSelectedPlanName] = useState('');
+  const [showPlanModal, setShowPlanModal] = useState(false);
   const [selectedRubro, setSelectedRubro] = useState('');
   const [loginUser, setLoginUser] = useState('');
   const [loginPass, setLoginPass] = useState('');
@@ -737,180 +741,36 @@ export const LoginScreen: React.FC<Props> = ({ onLogin }) => {
     );
   }
 
-  // ─── PLANES CONTADOR ─────────────────────────────────────────────────────────
-  if (step === 'PLAN_ACCOUNTANT') {
-    const plans = [
-      {
-        id: 'TRIAL_CONTADOR', name: 'Mes Gratis', price: 'S/ 0', period: '1 mes',
-        icon: '🎁', color: P.green, highlight: true,
-        businesses: 3, ai: 'Sin IA',
-        features: ['3 negocios', 'Contabilidad básica', 'Ventas y compras', 'Reportes esenciales'],
-        note: '1 mes · solo una vez por contador · negocios no pueden repetir prueba',
-      },
-      {
-        id: 'BASICO_CONTADOR', name: 'Básico', price: 'S/ XX', period: '/mes',
-        icon: '📊', color: P.accent, highlight: false,
-        businesses: 5, ai: 'Sin IA',
-        features: ['5 negocios activos', 'Contabilidad completa', 'Ventas y compras', 'Reportes'],
-        note: 'Continuación al mes gratis',
-      },
-      {
-        id: 'PLUS_CONTADOR', name: 'Plus', price: 'S/ XX', period: '/mes',
-        icon: '⚡', color: P.blue, highlight: false,
-        businesses: 10, ai: '50 usos IA/mes',
-        features: ['10 negocios activos', 'Contabilidad completa', 'Ventas y compras', 'Reportes avanzados', '50 usos IA por mes'],
-        note: 'Solo aumenta negocios + IA respecto a Básico',
-      },
-      {
-        id: 'PRO_CONTADOR', name: 'Pro', price: 'S/ XX', period: '/mes',
-        icon: '🚀', color: P.indigo, highlight: false,
-        businesses: 15, ai: '100 usos IA/mes',
-        features: ['15 negocios activos', 'Contabilidad completa', 'Ventas y compras', 'BI avanzado', '100 usos IA por mes'],
-        note: 'Solo aumenta negocios + IA respecto a Plus',
-      },
-      {
-        id: 'MAESTRO_PLUS', name: 'Maestro+', price: 'A tratar', period: '',
-        icon: '👑', color: P.purple, highlight: false,
-        businesses: 0, ai: 'IA ilimitada',
-        features: ['Negocios ilimitados', 'ERP COMPLETO activo', 'Inventario + Almacén', 'Planillas completas', 'Centros de costo', 'IA sin límite', 'Soporte dedicado'],
-        note: 'Para contadores que necesitan ERP completo · Implementación guiada',
-      },
-    ];
+  // ─── PLANES (modal flotante — contador o empresa) ───────────────────────────
+  if (step === 'PLAN_ACCOUNTANT' || step === 'PLAN_COMPANY') {
+    const prevStep = step === 'PLAN_ACCOUNTANT' ? 'REG_ACCOUNTANT' : 'REG_COMPANY';
+    const userType = step === 'PLAN_ACCOUNTANT' ? 'CONTADOR' : 'EMPRESA';
+
+    const handlePlanSelect = (plan: PlanSelected) => {
+      setSelectedPlan(plan.id);
+      setSelectedPlanName(plan.name);
+      const isMaestro = plan.id.includes('MAESTRO');
+      if (isMaestro || step === 'PLAN_ACCOUNTANT') {
+        setStep('CONFIRM');
+      } else {
+        setStep('RUBRO');
+      }
+    };
 
     return (
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Segoe UI', Arial, sans-serif", position: 'relative', overflow: 'hidden', padding: '20px' }}>
         <Background />
-        <div style={{ width: '100%', maxWidth: 900, position: 'relative', zIndex: 1 }}>
+        {/* Logo y pasos visibles detrás del modal */}
+        <div style={{ position: 'relative', zIndex: 1, textAlign: 'center' }}>
           <Logo3D size={48} />
           <StepDots current={3} />
-
-          <div style={{ textAlign: 'center', marginBottom: 20 }}>
-            <h2 style={{ color: P.text, fontSize: 20, fontWeight: 800, margin: '0 0 4px' }}>Plan para Contador Independiente</h2>
-            <p style={{ color: P.dim, fontSize: 13, margin: 0 }}>Básico, Plus y Pro son el mismo plan — la única diferencia es el número de negocios y uso de IA</p>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10, marginBottom: 14 }}>
-            {plans.map(pl => (
-              <button key={pl.id} type="button" onClick={() => setSelectedPlan(pl.id)} style={{
-                ...card, padding: '18px 12px', textAlign: 'center', cursor: 'pointer',
-                border: `1.5px solid ${selectedPlan === pl.id ? pl.color : pl.highlight ? `${pl.color}66` : P.border}`,
-                background: selectedPlan === pl.id ? `${pl.color}18` : pl.highlight ? `${pl.color}0a` : P.glass,
-                boxShadow: selectedPlan === pl.id ? `0 0 0 1px ${pl.color}44, 0 8px 32px ${pl.color}22` : 'none',
-                transition: 'all 0.2s', position: 'relative', width: '100%',
-                fontFamily: "'Segoe UI', Arial, sans-serif",
-                transform: selectedPlan === pl.id ? 'translateY(-4px)' : 'none',
-              }}>
-                {pl.highlight && (
-                  <div style={{ position: 'absolute', top: -10, left: '50%', transform: 'translateX(-50%)', background: pl.color, color: '#000', fontSize: 9, fontWeight: 800, padding: '2px 10px', borderRadius: 20, whiteSpace: 'nowrap' }}>GRATIS 1 MES</div>
-                )}
-                {pl.id === 'MAESTRO_PLUS' && (
-                  <div style={{ position: 'absolute', top: -10, left: '50%', transform: 'translateX(-50%)', background: pl.color, color: '#fff', fontSize: 9, fontWeight: 800, padding: '2px 10px', borderRadius: 20, whiteSpace: 'nowrap' }}>ERP COMPLETO</div>
-                )}
-                <div style={{ fontSize: 24, marginBottom: 6 }}>{pl.icon}</div>
-                <div style={{ color: pl.color, fontWeight: 900, fontSize: 13, marginBottom: 2 }}>{pl.name}</div>
-                <div style={{ color: P.text, fontWeight: 800, fontSize: pl.price === 'A tratar' ? 11 : 16, marginBottom: 2 }}>{pl.price}<span style={{ color: P.dim, fontSize: 10 }}>{pl.period}</span></div>
-                <div style={{ color: P.dim, fontSize: 10, marginBottom: 8 }}>
-                  {pl.businesses === 0 ? 'Negocios ilimitados' : `${pl.businesses} negocios`}
-                </div>
-                <div style={{ background: `${pl.color}22`, color: pl.color, fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 6, marginBottom: 8 }}>{pl.ai}</div>
-                {pl.features.map((f, i) => (
-                  <div key={i} style={{ color: P.dim, fontSize: 10, textAlign: 'left', padding: '2px 0', display: 'flex', gap: 4 }}>
-                    <span style={{ color: pl.color }}>✓</span> {f}
-                  </div>
-                ))}
-                <div style={{ marginTop: 8, color: P.dim, fontSize: 9, lineHeight: 1.3, textAlign: 'left', borderTop: `1px solid ${P.border}`, paddingTop: 6 }}>{pl.note}</div>
-              </button>
-            ))}
-          </div>
-
-          <div style={{ ...card, padding: '14px 20px', marginBottom: 12, background: `${P.yellow}10`, border: `1px solid ${P.yellow}33` }}>
-            <span style={{ color: P.yellow, fontSize: 13 }}>⚠ </span>
-            <span style={{ color: P.muted, fontSize: 12 }}>
-              <strong style={{ color: P.yellow }}>Nota:</strong> Los planes Básico, Plus y Pro tienen exactamente los mismos módulos de contabilidad.
-              Solo difieren en la cantidad de negocios que puedes gestionar y los usos de IA por mes.
-              Si necesitas inventario, planillas o ERP completo → elige <strong style={{ color: P.purple }}>Maestro+</strong>.
-            </span>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            <button type="button" onClick={() => setStep('REG_ACCOUNTANT')} style={{ ...btn(P.accent, true), width: '100%' }}>← Volver</button>
-            <button type="button" onClick={() => { if (selectedPlan) setStep('CONFIRM'); }} style={{ ...btn(selectedPlan ? P.accent : P.dim), opacity: selectedPlan ? 1 : 0.4, cursor: selectedPlan ? 'pointer' : 'not-allowed' }}>
-              {selectedPlan === 'MAESTRO_PLUS' ? 'Solicitar Maestro+ →' : 'Continuar →'}
-            </button>
-          </div>
         </div>
-      </div>
-    );
-  }
-
-  // ─── PLANES EMPRESA ────────────────────────────────────────────────────────
-  if (step === 'PLAN_COMPANY') {
-    const plans = [
-      {
-        id: 'PLUS_EMPRESA', name: 'Plus Empresa', price: 'S/ XX', period: '/mes',
-        icon: '⚡', color: P.accent, highlight: false,
-        aiDocs: 100,
-        features: ['1 empresa', '100 documentos IA/mes', 'Módulos base por rubro', 'Plan contable por actividad', 'Almacén (si rubro lo requiere)', 'Reportes básicos'],
-      },
-      {
-        id: 'PRO_EMPRESA', name: 'Pro Empresa', price: 'S/ XX', period: '/mes',
-        icon: '🚀', color: P.blue, highlight: true,
-        aiDocs: 200,
-        features: ['1 empresa', '200 documentos IA/mes', 'Más módulos activos', 'Plan contable detallado', 'Centros de costo', 'Almacenes múltiples', 'Reportes avanzados', 'IA mayor capacidad'],
-      },
-      {
-        id: 'MAESTRO_EMPRESA', name: 'Maestro Empresa', price: 'A tratar', period: '',
-        icon: '👑', color: P.purple, highlight: false,
-        aiDocs: 0,
-        features: ['Implementación personalizada', 'Diagnóstico de procesos', 'ERP completo a medida', 'Plan contable avanzado', 'Múltiples áreas y usuarios', 'IA por proceso interno', 'Capacitación y soporte'],
-      },
-    ];
-
-    return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Segoe UI', Arial, sans-serif", position: 'relative', overflow: 'hidden', padding: '20px' }}>
-        <Background />
-        <div style={{ width: '100%', maxWidth: 720, position: 'relative', zIndex: 1 }}>
-          <Logo3D size={48} />
-          <StepDots current={3} />
-          <div style={{ textAlign: 'center', marginBottom: 20 }}>
-            <h2 style={{ color: P.text, fontSize: 20, fontWeight: 800, margin: '0 0 4px' }}>Plan para tu Empresa</h2>
-            <p style={{ color: P.dim, fontSize: 13, margin: 0 }}>Los módulos se activan automáticamente según el rubro que elijas</p>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14, marginBottom: 14 }}>
-            {plans.map(pl => (
-              <button key={pl.id} type="button" onClick={() => setSelectedPlan(pl.id)} style={{
-                ...card, padding: '22px 16px', textAlign: 'center', cursor: 'pointer',
-                border: `1.5px solid ${selectedPlan === pl.id ? pl.color : pl.highlight ? `${pl.color}55` : P.border}`,
-                background: selectedPlan === pl.id ? `${pl.color}18` : pl.highlight ? `${pl.color}0a` : P.glass,
-                boxShadow: selectedPlan === pl.id ? `0 0 0 1px ${pl.color}44, 0 12px 40px ${pl.color}22` : 'none',
-                transition: 'all 0.2s', position: 'relative', width: '100%',
-                fontFamily: "'Segoe UI', Arial, sans-serif",
-                transform: selectedPlan === pl.id ? 'translateY(-6px) scale(1.02)' : pl.highlight ? 'scale(1.02)' : 'none',
-              }}>
-                {pl.highlight && <div style={{ position: 'absolute', top: -12, left: '50%', transform: 'translateX(-50%)', background: pl.color, color: '#fff', fontSize: 10, fontWeight: 800, padding: '3px 14px', borderRadius: 20 }}>MÁS POPULAR</div>}
-                {pl.id === 'MAESTRO_EMPRESA' && <div style={{ position: 'absolute', top: -12, left: '50%', transform: 'translateX(-50%)', background: pl.color, color: '#fff', fontSize: 10, fontWeight: 800, padding: '3px 14px', borderRadius: 20 }}>PERSONALIZADO</div>}
-                <div style={{ fontSize: 28, marginBottom: 8 }}>{pl.icon}</div>
-                <div style={{ color: pl.color, fontWeight: 900, fontSize: 14 }}>{pl.name}</div>
-                <div style={{ color: P.text, fontWeight: 800, fontSize: 22, margin: '6px 0 2px' }}>{pl.price}<span style={{ color: P.dim, fontSize: 11 }}>{pl.period}</span></div>
-                {pl.aiDocs > 0 && <div style={{ background: `${pl.color}22`, color: pl.color, fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20, display: 'inline-block', marginBottom: 12 }}>{pl.aiDocs} docs IA/mes</div>}
-                {pl.aiDocs === 0 && <div style={{ background: `${pl.color}22`, color: pl.color, fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20, display: 'inline-block', marginBottom: 12 }}>IA según contrato</div>}
-                {pl.features.map((f, i) => (
-                  <div key={i} style={{ color: P.dim, fontSize: 11, textAlign: 'left', padding: '3px 0', display: 'flex', gap: 6 }}>
-                    <span style={{ color: pl.color }}>✓</span> {f}
-                  </div>
-                ))}
-              </button>
-            ))}
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            <button type="button" onClick={() => setStep('REG_COMPANY')} style={{ ...btn(P.accent, true) }}>← Volver</button>
-            <button type="button" onClick={() => { if (selectedPlan) setStep(selectedPlan === 'MAESTRO_EMPRESA' ? 'CONFIRM' : 'RUBRO'); }} style={{ ...btn(selectedPlan ? P.blue : P.dim), opacity: selectedPlan ? 1 : 0.4, cursor: selectedPlan ? 'pointer' : 'not-allowed' }}>
-              {selectedPlan === 'MAESTRO_EMPRESA' ? 'Solicitar diagnóstico →' : 'Elegir rubro →'}
-            </button>
-          </div>
-        </div>
+        {/* Modal flotante */}
+        <PlanSelectorModal
+          defaultType={userType as any}
+          onSelect={handlePlanSelect}
+          onClose={() => setStep(prevStep as any)}
+        />
       </div>
     );
   }
@@ -1015,7 +875,7 @@ export const LoginScreen: React.FC<Props> = ({ onLogin }) => {
             <div style={{ background: 'rgba(56,189,248,0.06)', border: `1px solid ${P.border}`, borderRadius: 12, padding: '16px 20px', marginBottom: 20 }}>
               {[
                 { label: 'Tipo de cuenta', value: accountType === 'ACCOUNTANT' ? 'Contador independiente' : 'Empresa / Negocio' },
-                { label: 'Plan seleccionado', value: planLabels[selectedPlan] || selectedPlan, color: planColors[selectedPlan] },
+                { label: 'Plan seleccionado', value: selectedPlanName || planLabels[selectedPlan] || selectedPlan, color: planColors[selectedPlan] },
                 ...(selectedRubro ? [{ label: 'Rubro', value: RUBROS.find(r => r.id === selectedRubro)?.label || selectedRubro }] : []),
                 ...(accountType === 'ACCOUNTANT' && acctData.nombres ? [{ label: 'Titular', value: `${acctData.nombres} ${acctData.apellidos}` }] : []),
                 ...(accountType === 'COMPANY' && compData.razonSocial ? [{ label: 'Empresa', value: compData.razonSocial }] : []),

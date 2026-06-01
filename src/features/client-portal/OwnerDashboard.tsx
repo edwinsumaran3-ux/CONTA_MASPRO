@@ -702,25 +702,25 @@ export const OwnerDashboard = () => {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10 }}>
                 {[
                   {
-                    id: 'TRIAL',  name: '1 Mes Gratis', price: 'S/ 0', period: '1 mes', icon: '🎁', color: C.green,
+                    id: 'TRIAL',  name: '1 Mes Gratis', price: 'GRATIS', period: '1 mes', icon: '🎁', color: C.green,
                     negocios: 3, ia: 'Sin IA', modulos: ['Contabilidad', 'Ventas', 'Compras', 'Reportes básicos'],
                     restricciones: ['Solo 1 vez por contador', 'Negocios no pueden repetir prueba', 'Sin IA ni OCR'],
                     clientes: clientes.filter(c => c.plan === 'TRIAL_CONTADOR').length,
                   },
                   {
-                    id: 'BASICO', name: 'Básico', price: 'S/ XX', period: '/mes', icon: '📊', color: C.muted,
+                    id: 'BASICO', name: 'Básico', price: '$50', period: '/mes', icon: '📊', color: C.muted,
                     negocios: 5, ia: 'Sin IA', modulos: ['Contabilidad completa', 'Ventas', 'Compras', 'Reportes'],
                     restricciones: ['Sin IA ni OCR', 'Sin inventario', 'Sin planillas'],
                     clientes: clientes.filter(c => c.plan === 'BASICO_CONTADOR').length,
                   },
                   {
-                    id: 'PLUS',   name: 'Plus', price: 'S/ XX', period: '/mes', icon: '⚡', color: C.blue,
+                    id: 'PLUS',   name: 'Plus', price: '$99', period: '/mes', icon: '⚡', color: C.blue,
                     negocios: 10, ia: '50 usos/mes', modulos: ['Contabilidad completa', 'Ventas', 'Compras', 'OCR Gemini', 'IA 50 docs/mes', 'Reportes'],
                     restricciones: ['Sin inventario', 'Sin planillas'],
                     clientes: clientes.filter(c => c.plan === 'PLUS_CONTADOR').length,
                   },
                   {
-                    id: 'PRO',    name: 'Pro', price: 'S/ XX', period: '/mes', icon: '🚀', color: C.indigo || C.blue,
+                    id: 'PRO',    name: 'Pro', price: '$129', period: '/mes', icon: '🚀', color: C.indigo || C.blue,
                     negocios: 15, ia: '100 usos/mes', modulos: ['Contabilidad completa', 'Ventas', 'Compras', 'OCR Gemini', 'IA 100 docs/mes', 'BI avanzado', 'Reportes'],
                     restricciones: ['Sin inventario', 'Sin planillas'],
                     clientes: clientes.filter(c => c.plan === 'PRO_CONTADOR').length,
@@ -780,13 +780,13 @@ export const OwnerDashboard = () => {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
                 {[
                   {
-                    id: 'PLUS_EMPRESA', name: 'Plus Empresa', price: 'S/ XX', period: '/mes', icon: '⚡', color: C.accent,
+                    id: 'PLUS_EMPRESA', name: 'Plus Empresa', price: '$119', period: '/mes', icon: '⚡', color: C.accent,
                     ia: '100 docs/mes', modulos: ['Contabilidad', 'Ventas', 'Compras', 'Inventario base', 'OCR IA 100 docs', 'Módulos por rubro', 'Plan contable por actividad'],
                     noIncluye: ['Planillas', 'Centros de costo', 'Almacenes múltiples'],
                     clientes: clientes.filter(c => c.plan === 'PLUS_EMPRESA').length,
                   },
                   {
-                    id: 'PRO_EMPRESA',  name: 'Pro Empresa', price: 'S/ XX', period: '/mes', icon: '🚀', color: C.blue,
+                    id: 'PRO_EMPRESA',  name: 'Pro Empresa', price: '$149', period: '/mes', icon: '🚀', color: C.blue,
                     ia: '200 docs/mes', modulos: ['Contabilidad', 'Ventas', 'Compras', 'Inventario completo', 'Planillas', 'OCR IA 200 docs', 'Centros de costo', 'Almacenes múltiples', 'BI avanzado', 'SUNAT'],
                     noIncluye: ['Implementación personalizada'],
                     clientes: clientes.filter(c => c.plan === 'PRO_EMPRESA').length,
