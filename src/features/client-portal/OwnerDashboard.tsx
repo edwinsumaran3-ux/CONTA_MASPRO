@@ -83,41 +83,10 @@ interface Alert {
 }
 
 // ─── Datos demo ────────────────────────────────────────────────────────────
-const DEMO_PAGOS: PendingPayment[] = [
-  { id: 'P001', fecha: '2026-06-01', cliente: 'Ferretería El Maestro EIRL', ruc: '20601234567', plan: 'Plus Empresa', monto: 149, metodo: 'YAPE', referencia: 'YP-2026060112345', telefono: '987654321', status: 'PENDIENTE' },
-  { id: 'P002', fecha: '2026-06-01', cliente: 'CPC Juan Pérez García', ruc: '10453219876', plan: 'Pro Contador', monto: 99, metodo: 'PLIN', referencia: 'PL-2026060198765', telefono: '956123456', status: 'PENDIENTE' },
-  { id: 'P003', fecha: '2026-05-31', cliente: 'Construcciones Norte SAC', ruc: '20509876543', plan: 'Pro Empresa', monto: 249, metodo: 'TRANSFERENCIA', referencia: 'BCP-00123456', telefono: '912345678', status: 'PENDIENTE' },
-  { id: 'P004', fecha: '2026-05-30', cliente: 'Minería Los Andes EIRL', ruc: '20455667788', plan: 'Maestro Empresa', monto: 890, metodo: 'YAPE', referencia: 'YP-2026053000011', telefono: '943216789', status: 'APROBADO' },
-  { id: 'P005', fecha: '2026-05-29', cliente: 'CPC María Torres', ruc: '10123456789', plan: 'Plus Contador', monto: 69, metodo: 'PLIN', referencia: 'PL-INVALIDO', telefono: '978001234', status: 'RECHAZADO' },
-];
-
-const DEMO_CLIENTES: Client[] = [
-  { id: 'C001', tipo: 'EMPRESA', nombre: 'Ferretería El Maestro EIRL', ruc: '20601234567', email: 'admin@ferreteria.com', plan: 'PLUS_EMPRESA', status: 'TRIAL', fechaRegistro: '2026-05-15', ultimoAcceso: '2026-06-01', vencimiento: '2026-06-15', docsIA: 12, limiteIA: 100, codigoAcceso: 'CP-2026-A1B2', ips: ['190.232.1.10'], negocios: 1 },
-  { id: 'C002', tipo: 'CONTADOR', nombre: 'CPC Juan Pérez García', ruc: '10453219876', email: 'jperez@contador.pe', plan: 'PRO_CONTADOR', status: 'ACTIVO', fechaRegistro: '2026-04-10', ultimoAcceso: '2026-06-01', vencimiento: '2026-07-10', docsIA: 67, limiteIA: 100, codigoAcceso: 'CP-2026-C3D4', ips: ['190.232.5.88', '181.65.2.11'], negocios: 12 },
-  { id: 'C003', tipo: 'EMPRESA', nombre: 'Construcciones Norte SAC', ruc: '20509876543', email: 'contabilidad@cnorte.com', plan: 'PRO_EMPRESA', status: 'ACTIVO', fechaRegistro: '2026-03-01', ultimoAcceso: '2026-05-28', vencimiento: '2026-06-01', docsIA: 198, limiteIA: 200, codigoAcceso: 'CP-2026-E5F6', ips: ['181.65.8.44'], negocios: 1 },
-  { id: 'C004', tipo: 'EMPRESA', nombre: 'Minería Los Andes EIRL', ruc: '20455667788', email: 'erp@andes.pe', plan: 'MAESTRO_EMPRESA', status: 'ACTIVO', fechaRegistro: '2026-01-15', ultimoAcceso: '2026-06-01', vencimiento: '2027-01-15', docsIA: 0, limiteIA: 0, codigoAcceso: 'CP-2026-G7H8', ips: ['200.60.3.22'], negocios: 1 },
-  { id: 'C005', tipo: 'CONTADOR', nombre: 'CPC María Torres Quispe', ruc: '10123456789', email: 'mtorres@mcontable.pe', plan: 'PLUS_CONTADOR', status: 'VENCIDO', fechaRegistro: '2026-02-20', ultimoAcceso: '2026-05-20', vencimiento: '2026-05-20', docsIA: 45, limiteIA: 50, codigoAcceso: 'CP-2026-I9J0', ips: ['190.232.9.5'], negocios: 8 },
-  { id: 'C006', tipo: 'EMPRESA', nombre: 'Distribuidora Sur SAC', ruc: '20312456789', email: 'admin@dissur.com', plan: 'PLUS_EMPRESA', status: 'SUSPENDIDO', fechaRegistro: '2026-04-01', ultimoAcceso: '2026-04-15', vencimiento: '2026-05-01', docsIA: 3, limiteIA: 100, codigoAcceso: 'CP-2026-K1L2', ips: ['181.65.4.33'], negocios: 1 },
-];
-
-const DEMO_CODIGOS: AccessCode[] = [
-  { codigo: 'CP-2026-A1B2', cliente: 'Ferretería El Maestro EIRL', plan: 'PLUS_EMPRESA', fechaGen: '2026-05-15', fechaUso: '2026-05-15', status: 'ACTIVO', ips: ['190.232.1.10'], intentosDuplicado: 0 },
-  { codigo: 'CP-2026-C3D4', cliente: 'CPC Juan Pérez García', plan: 'PRO_CONTADOR', fechaGen: '2026-04-10', fechaUso: '2026-04-10', status: 'ACTIVO', ips: ['190.232.5.88', '181.65.2.11'], intentosDuplicado: 0 },
-  { codigo: 'CP-2026-E5F6', cliente: 'Construcciones Norte SAC', plan: 'PRO_EMPRESA', fechaGen: '2026-03-01', fechaUso: '2026-03-01', status: 'ACTIVO', ips: ['181.65.8.44'], intentosDuplicado: 0 },
-  { codigo: 'CP-2026-G7H8', cliente: 'Minería Los Andes EIRL', plan: 'MAESTRO_EMPRESA', fechaGen: '2026-01-15', fechaUso: '2026-01-15', status: 'ACTIVO', ips: ['200.60.3.22'], intentosDuplicado: 0 },
-  { codigo: 'CP-2026-I9J0', cliente: 'CPC María Torres Quispe', plan: 'PLUS_CONTADOR', fechaGen: '2026-02-20', fechaUso: '2026-02-20', status: 'EXPIRADO', ips: ['190.232.9.5'], intentosDuplicado: 0 },
-  { codigo: 'CP-2026-K1L2', cliente: 'Distribuidora Sur SAC', plan: 'PLUS_EMPRESA', fechaGen: '2026-04-01', fechaUso: '2026-04-01', status: 'BLOQUEADO', ips: ['181.65.4.33', '190.1.2.3', '200.5.6.7'], intentosDuplicado: 2 },
-  { codigo: 'CP-2026-M3N4', cliente: 'SIN ASIGNAR', plan: 'PLUS_EMPRESA', fechaGen: '2026-06-01', fechaUso: '—', status: 'USADO', ips: [], intentosDuplicado: 0 },
-];
-
-const DEMO_ALERTAS: Alert[] = [
-  { id: 'A001', tipo: 'SEGURIDAD', nivel: 'ALTO', mensaje: 'Código CP-2026-K1L2 usado desde 3 IPs distintas', cliente: 'Distribuidora Sur SAC', fecha: '2026-06-01' },
-  { id: 'A002', tipo: 'VENCIMIENTO', nivel: 'ALTO', mensaje: 'Plan vence HOY — pendiente renovación', cliente: 'Construcciones Norte SAC', fecha: '2026-06-01' },
-  { id: 'A003', tipo: 'LIMITE', nivel: 'MEDIO', mensaje: 'Consumió 198/200 documentos IA este mes', cliente: 'Construcciones Norte SAC', fecha: '2026-06-01' },
-  { id: 'A004', tipo: 'PAGO', nivel: 'MEDIO', mensaje: '3 pagos pendientes de validar', cliente: 'Sistema', fecha: '2026-06-01' },
-  { id: 'A005', tipo: 'VENCIMIENTO', nivel: 'INFO', mensaje: 'Plan vence en 14 días', cliente: 'Ferretería El Maestro EIRL', fecha: '2026-06-01' },
-  { id: 'A006', tipo: 'INACTIVIDAD', nivel: 'INFO', mensaje: 'Sin actividad por 45 días', cliente: 'Distribuidora Sur SAC', fecha: '2026-06-01' },
-];
+const DEMO_PAGOS: PendingPayment[] = [];
+const DEMO_CLIENTES: Client[] = [];
+const DEMO_CODIGOS: AccessCode[] = [];
+const DEMO_ALERTAS: Alert[] = [];
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 const fmt = (n: number) => n.toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
