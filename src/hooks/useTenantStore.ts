@@ -10,7 +10,7 @@ export type Company = {
 };
 
 type TenantState = {
-  currentCompany: Company | null;
+  currentCompany: Company;          // nunca null — sistema depende de esto
   companies: Company[];
   setCompany: (id: string) => void;
   addCompany: (company: Company) => void;
@@ -21,10 +21,21 @@ type TenantState = {
 
 const STORAGE_KEY = 'conta_pro_companies';
 
+const PLACEHOLDER: Company = {
+  id: 'tenant-placeholder',
+  ruc: '',
+  businessName: 'Sin empresa activa',
+  rubro: 'GE',
+  rubros: ['GE'],
+};
+
 const loadCompanies = (): Company[] => {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw) as Company[];
+    if (raw) {
+      const parsed = JSON.parse(raw) as Company[];
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
   } catch { /* ignore */ }
   return [];
 };
@@ -36,7 +47,7 @@ const saveCompanies = (companies: Company[]) => {
 const initialCompanies = loadCompanies();
 
 export const useTenantStore = create<TenantState>((set, get) => ({
-  currentCompany: initialCompanies[0] ?? null,
+  currentCompany: initialCompanies[0] ?? PLACEHOLDER,
   companies: initialCompanies,
 
   setCompany: (id: string) => {
@@ -56,13 +67,12 @@ export const useTenantStore = create<TenantState>((set, get) => ({
     const current = get().currentCompany;
     set({
       companies: updated,
-      currentCompany: current?.id === id ? (updated[0] ?? null) : current,
+      currentCompany: current.id === id ? (updated[0] ?? PLACEHOLDER) : current,
     });
   },
 
   setRubro: (rubro: Rubro) => {
     const current = get().currentCompany;
-    if (!current) return;
     const updated = { ...current, rubro };
     const companies = get().companies.map(c => c.id === current.id ? updated : c);
     saveCompanies(companies);
@@ -71,7 +81,6 @@ export const useTenantStore = create<TenantState>((set, get) => ({
 
   setRubros: (rubros: Rubro[]) => {
     const current = get().currentCompany;
-    if (!current) return;
     const updated = { ...current, rubros, rubro: rubros[0] ?? current.rubro };
     const companies = get().companies.map(c => c.id === current.id ? updated : c);
     saveCompanies(companies);
