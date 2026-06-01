@@ -28,6 +28,7 @@ import { MassiveUpload } from './MassiveUpload';
 import { PurchaseFormEnterprise, type PurchaseSubmitPayload } from './PurchaseFormEnterprise';
 import { CompliancePanel } from '../sunat/CompliancePanel';
 import { SunatMonitor } from '../sunat/SunatMonitor';
+import { DeclaracionMensual } from '../sunat/DeclaracionMensual';
 import { AuditHealthDashboard } from '../audit/AuditHealthDashboard';
 import { ComprasEnhanced } from './ComprasEnhanced';
 import { PayrollGrid } from '../payroll/PayrollGrid';
@@ -238,6 +239,7 @@ const railItems = [
   { id: 'cxcxp',          label: 'CXC/CXP',          icon: BuildingBank24Regular,   feature: null },
   { id: 'inventario',     label: 'Inventario',       icon: Database24Regular,       feature: 'inventory' },
   { id: 'planillas',      label: 'Planillas',        icon: PersonMoney24Regular,    feature: 'payroll' },
+  { id: 'declaracion',    label: 'Declaracion SUNAT', icon: ShieldCheckmark24Regular, feature: null },
   { id: 'integraciones',  label: 'Integraciones',    icon: Database24Regular,       feature: 'integrations' },
   { id: 'owner',          label: 'Owner Portal',     icon: Database24Regular,       feature: 'superAdmin' },
   { id: 'config',         label: 'Configuracion',    icon: SlideSettings24Regular,  feature: null },
@@ -1320,6 +1322,13 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
     }
     if (selectedView === 'libros') {
       return <BooksCenter apiBase={API_BASE} tenantId={TENANT_ID} />;
+    }
+    if (selectedView === 'declaracion') {
+      return (
+        <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <DeclaracionMensual />
+        </div>
+      );
     }
     if (selectedView === 'ventas') {
       return <MassiveUpload />;
