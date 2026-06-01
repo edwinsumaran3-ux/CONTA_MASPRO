@@ -197,6 +197,62 @@ export const LoginScreen: React.FC<Props> = ({ onLogin }) => {
 
   const mouseRef = useRef({ x: 0, y: 0 });
   const cardRef = useRef<HTMLDivElement>(null);
+  const welcomePlayedRef = useRef(false);
+
+  // ─── Audio de bienvenida — Web Speech API (Google TTS gratis) ──────────────
+  // Se activa UNA sola vez al primer movimiento del mouse
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.speechSynthesis) return;
+
+    const TEXT =
+      'Bienvenido a CONTA PRO. ' +
+      'Tu sistema contable inteligente, potenciado con inteligencia artificial, ' +
+      'listo para impulsar el éxito de tu empresa.';
+
+    const speak = () => {
+      const voices = window.speechSynthesis.getVoices();
+
+      // Prioridad: Google español > cualquier voz española masculina > primera española
+      const voice =
+        voices.find(v => v.lang.startsWith('es') && /google/i.test(v.name) && /male|hombre|jorge|pablo|diego/i.test(v.name)) ||
+        voices.find(v => v.lang.startsWith('es') && /google/i.test(v.name)) ||
+        voices.find(v => v.lang === 'es-PE') ||
+        voices.find(v => v.lang === 'es-ES') ||
+        voices.find(v => v.lang.startsWith('es'));
+
+      const utter = new SpeechSynthesisUtterance(TEXT);
+      if (voice) utter.voice = voice;
+      utter.lang  = 'es-PE';
+      utter.rate  = 0.91;   // ritmo natural (1 = normal)
+      utter.pitch = 0.88;   // tono masculino (1 = normal)
+      utter.volume = 0.85;
+
+      window.speechSynthesis.cancel(); // limpiar cola
+      window.speechSynthesis.speak(utter);
+    };
+
+    const onFirstMove = () => {
+      if (welcomePlayedRef.current) return;
+      welcomePlayedRef.current = true;
+      window.removeEventListener('mousemove', onFirstMove);
+
+      // Las voces pueden no estar listas aún en algunos navegadores
+      if (window.speechSynthesis.getVoices().length > 0) {
+        speak();
+      } else {
+        window.speechSynthesis.onvoiceschanged = () => {
+          window.speechSynthesis.onvoiceschanged = null;
+          speak();
+        };
+      }
+    };
+
+    window.addEventListener('mousemove', onFirstMove);
+    return () => {
+      window.removeEventListener('mousemove', onFirstMove);
+      window.speechSynthesis?.cancel();
+    };
+  }, []);
 
   // ─── Google OAuth2 popup (más confiable que One Tap) ────────────────────
   useEffect(() => {
