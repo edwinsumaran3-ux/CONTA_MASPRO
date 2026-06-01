@@ -45,65 +45,76 @@ const speak = (text: string, onEnd?: () => void) => {
 const stopAudio = () => { window.speechSynthesis?.cancel(); currentUtterance = null; };
 
 // ─── Datos: Servicios SUNAT ────────────────────────────────────────────────
+// ─── Servicios SUNAT con URLs verificadas junio 2026 ──────────────────────
 const SUNAT_SERVICIOS = [
   {
-    categoria: 'Operaciones en Línea',
+    categoria: 'Operaciones en Línea (SOL)',
     icon: '🔐', color: C.blue,
     items: [
-      { nombre: 'Portal SOL — Operaciones en Línea', url: 'https://www.sunat.gob.pe/operatividadEnLinea/', desc: 'Declaraciones, pagos, consultas con clave SOL' },
-      { nombre: 'Declaraciones y Pagos (PDT)', url: 'https://www.sunat.gob.pe/declaracPagos/index.html', desc: 'PDT 621 IGV-Renta, PDT 617, PDT 601 planillas' },
-      { nombre: 'Clave SOL — Registro y recuperación', url: 'https://www.sunat.gob.pe/sol.html', desc: 'Obtener o recuperar tu clave de acceso' },
-      { nombre: 'SUNAT Operaciones en Línea (Empresas)', url: 'https://e-menu.sunat.gob.pe/', desc: 'Panel principal para empresas y negocios' },
+      { nombre: 'Menú SOL — Panel principal', url: 'https://e-menu.sunat.gob.pe/', desc: 'Acceso a todos los servicios con Clave SOL · Requiere Clave SOL', sol: true },
+      { nombre: 'Obtener / recuperar Clave SOL', url: 'https://orientacion.sunat.gob.pe/3333-recuperacion-de-clave-sol-por-internet-personas', desc: 'Crear o recuperar tu clave SOL desde internet · Público', sol: false },
+      { nombre: 'Declaraciones y Pagos', url: 'https://www2.sunat.gob.pe/pdt/modulos_independientes.html', desc: 'PDT 621 IGV-Renta, PDT 601 planillas, PDT 617 · Requiere Clave SOL', sol: true },
+      { nombre: 'Formulario Virtual 621', url: 'https://orientacion.sunat.gob.pe/01-formulario-virtual-ndeg-621-igv-renta-mensual', desc: 'Guía para declarar IGV y Renta mensual · Público', sol: false },
     ],
   },
   {
     categoria: 'Comprobantes Electrónicos',
     icon: '📄', color: C.green,
     items: [
-      { nombre: 'Consulta validez CPE', url: 'https://ww1.sunat.gob.pe/ol-ti-itconsvalicpe/ConsValiCpe.htm', desc: 'Verificar si una factura electrónica es válida' },
-      { nombre: 'SIRE — Registro de Ventas e Ingresos', url: 'https://www.sunat.gob.pe/ol-ti-itcpe/ChequeoSesionRecaudacion.html', desc: 'Sistema de Registro de Ventas e Ingresos SUNAT' },
-      { nombre: 'SEE del Contribuyente', url: 'https://e-menu.sunat.gob.pe/', desc: 'Emitir facturas, boletas, notas desde SUNAT' },
-      { nombre: 'Consulta de facturas emitidas', url: 'https://www.sunat.gob.pe/operatividadEnLinea/', desc: 'Ver el historial de comprobantes emitidos' },
+      { nombre: 'SIRE — Registros Electrónicos 2026', url: 'https://sire.sunat.gob.pe/', desc: 'Sistema Integrado de Registros de Ventas e Ingresos · Requiere Clave SOL', sol: true },
+      { nombre: 'Consulta validez de CPE', url: 'https://e-consulta.sunat.gob.pe/ol-ti-itconsvalicpe/ConsValiCpe.htm', desc: 'Verificar si una factura electrónica es válida · Público', sol: false },
+      { nombre: 'Emitir comprobantes — SEE SOL', url: 'https://cpe.sunat.gob.pe/sistema_emision/see_sol', desc: 'Emitir facturas y boletas gratis desde SUNAT · Requiere Clave SOL', sol: true },
+      { nombre: 'Portal CPE — Comprobantes', url: 'https://cpe.sunat.gob.pe/', desc: 'Información y acceso a sistema de comprobantes · Público', sol: false },
     ],
   },
   {
-    categoria: 'Consultas y Padrón',
+    categoria: 'Consultas Públicas',
     icon: '🔍', color: C.accent,
     items: [
-      { nombre: 'Consulta RUC', url: 'https://e-consultaruc.sunat.gob.pe/cl-ti-itmrconsruc/FrameCriterioBusquedaWeb.jsp', desc: 'Estado, régimen, condición del RUC' },
-      { nombre: 'Consulta de deuda tributaria', url: 'https://www.sunat.gob.pe/operatividadEnLinea/', desc: 'Estado de deudas con SUNAT (requiere clave SOL)' },
-      { nombre: 'Padrón de contribuyentes', url: 'https://www.sunat.gob.pe/padronContribuyentes.html', desc: 'Consulta de buenos contribuyentes' },
-      { nombre: 'Consulta de expedientes', url: 'https://www.sunat.gob.pe/operatividadEnLinea/', desc: 'Estado de trámites y expedientes en SUNAT' },
+      { nombre: 'Consulta de RUC', url: 'https://e-consultaruc.sunat.gob.pe/', desc: 'Estado, régimen y condición del RUC · Público sin clave', sol: false },
+      { nombre: 'Consulta de expedientes externos', url: 'https://www.sunat.gob.pe/cl-at-itconsultaext/consultaExterna/iniciarParametros', desc: 'Estado de trámites sin Clave SOL · Público', sol: false },
+      { nombre: 'Padrón de Buenos Contribuyentes', url: 'https://ww3.sunat.gob.pe/descarga/BueCont/BueCont0.html', desc: 'Lista de contribuyentes con excelente cumplimiento · Público', sol: false },
+      { nombre: 'Deuda tributaria', url: 'https://e-consulta.sunat.gob.pe/cl-at-itcalculibre/actdeuS01Alias', desc: 'Consultar deuda tributaria pendiente · Requiere Clave SOL', sol: true },
     ],
   },
   {
     categoria: 'Libros Electrónicos PLE',
     icon: '📚', color: C.purple,
     items: [
-      { nombre: 'PLE — Programa de Libros Electrónicos', url: 'https://www.sunat.gob.pe/comprobantespago/ple.html', desc: 'Descargar e instalar el programa PLE' },
-      { nombre: 'PLES — Módulo de envío', url: 'https://www.sunat.gob.pe/operatividadEnLinea/', desc: 'Enviar los libros electrónicos generados' },
-      { nombre: 'Cronograma PLE', url: 'https://www.sunat.gob.pe/legislacion/superin/2016/375.pdf', desc: 'Obligados y plazos de afiliación a libros electrónicos' },
-      { nombre: 'Validador de libros electrónicos', url: 'https://www.sunat.gob.pe/operatividadEnLinea/', desc: 'Verificar estructura de archivos PLE antes de enviar' },
+      { nombre: 'Descargar PLE v5.2 (2026)', url: 'https://emprender.sunat.gob.pe/comprobantes-libros/registros-libros-electronicos/programa-libros-electronicos-ple', desc: 'Programa para generar y validar libros electrónicos · Público', sol: false },
+      { nombre: 'Enviar libros (PLES)', url: 'https://e-menu.sunat.gob.pe/', desc: 'Enviar libros PLE a SUNAT desde el menú SOL · Requiere Clave SOL', sol: true },
+      { nombre: 'Información sobre PLE/SIRE', url: 'https://orientacion.sunat.gob.pe/', desc: 'Guías, cronogramas y obligados a libros electrónicos · Público', sol: false },
+      { nombre: 'Cronograma vencimientos 2026', url: 'https://www.sunat.gob.pe/orientacion/cronogramas/2026/', desc: 'Fechas de vencimiento por dígito RUC · Público', sol: false },
     ],
   },
   {
-    categoria: 'Detracciones y Retenciones',
+    categoria: 'Detracciones SPOT',
     icon: '🏦', color: C.yellow,
     items: [
-      { nombre: 'SPOT — Sistema Detracciones', url: 'https://www.sunat.gob.pe/descarga/cartillasOrient/SPOT.pdf', desc: 'Consulta y depósito de detracciones' },
-      { nombre: 'Consulta saldo cuenta detracciones', url: 'https://www.sunat.gob.pe/operatividadEnLinea/', desc: 'Saldo disponible en cuenta del Banco de la Nación' },
-      { nombre: 'Sistema de Retenciones', url: 'https://www.sunat.gob.pe/legislacion/comprob/retencion.html', desc: 'Agentes de retención y percepción del IGV' },
-      { nombre: 'Liberación de fondos detracciones', url: 'https://www.sunat.gob.pe/operatividadEnLinea/', desc: 'Solicitar liberación del saldo de detracciones' },
+      { nombre: 'Guía SPOT — Detracciones', url: 'https://emprender.sunat.gob.pe/detracciones-operatividad', desc: 'Qué es SPOT, cómo depositar, tasas · Público', sol: false },
+      { nombre: 'Depositar detracciones (SOL)', url: 'https://e-menu.sunat.gob.pe/', desc: 'Realizar depósito de detracciones online · Requiere Clave SOL', sol: true },
+      { nombre: 'Liberación de fondos (Form. 1697)', url: 'https://e-menu.sunat.gob.pe/', desc: 'Solicitar liberación del saldo no usado · Requiere Clave SOL', sol: true },
+      { nombre: 'Saldo cuenta detracciones (BN)', url: 'https://www.bn.com.pe/', desc: 'Consultar saldo en Banco de la Nación · Requiere cuenta BN', sol: false },
     ],
   },
   {
     categoria: 'Trámites y Orientación',
     icon: '📋', color: C.orange,
     items: [
-      { nombre: 'TUPA — Procedimientos administrativos', url: 'https://www.sunat.gob.pe/institucional/publicaciones/tupa.html', desc: 'Todos los trámites, requisitos y plazos SUNAT' },
-      { nombre: 'Orientación tributaria', url: 'https://www.sunat.gob.pe/orientacion.html', desc: 'Guías, manuales y orientación al contribuyente' },
-      { nombre: 'Aplazamiento/fraccionamiento deudas', url: 'https://www.sunat.gob.pe/operatividadEnLinea/', desc: 'Solicitar refinanciamiento de deudas tributarias' },
-      { nombre: 'Mesa de partes virtual', url: 'https://www.sunat.gob.pe/MPVirtual/', desc: 'Presentar documentos y escritos sin ir a SUNAT' },
+      { nombre: 'Orientación tributaria SUNAT', url: 'https://orientacion.sunat.gob.pe/', desc: 'Guías, manuales, FAQ y cronogramas · Público', sol: false },
+      { nombre: 'TUPA — Trámites y procedimientos', url: 'https://www.sunat.gob.pe/legislacion/tupa/index.html', desc: 'Requisitos y plazos de todos los trámites · Público', sol: false },
+      { nombre: 'Mesa de partes virtual', url: 'https://ww1.sunat.gob.pe/ol-at-ittramitedoc/registro/iniciar', desc: 'Presentar documentos 24/7 sin ir a SUNAT · Requiere Clave SOL', sol: true },
+      { nombre: 'Aplazamiento / fraccionamiento', url: 'https://e-menu.sunat.gob.pe/', desc: 'Refinanciar deudas tributarias hasta 72 cuotas · Requiere Clave SOL', sol: true },
+    ],
+  },
+  {
+    categoria: 'Capacitación y Recursos',
+    icon: '🎓', color: C.indigo,
+    items: [
+      { nombre: 'Charlas virtuales SUNAT', url: 'https://charlas.sunat.gob.pe/', desc: 'Capacitaciones gratuitas online de SUNAT · Público', sol: false },
+      { nombre: 'Portal del emprendedor SUNAT', url: 'https://emprender.sunat.gob.pe/', desc: 'Guías para nuevos negocios y emprendedores · Público', sol: false },
+      { nombre: 'Cronogramas tributarios 2026', url: 'https://www.sunat.gob.pe/orientacion/cronogramas/2026/', desc: 'Calendario completo de vencimientos · Público', sol: false },
+      { nombre: 'SUNAT sin clave SOL', url: 'https://www.sunat.gob.pe/sinclavesol/', desc: 'Servicios disponibles sin necesidad de Clave SOL · Público', sol: false },
     ],
   },
 ];
@@ -330,7 +341,7 @@ export const SunatPortalHub: React.FC = () => {
         {/* ═══ ACCESO A TRÁMITES ═══ */}
         {tab === 'ACCESO' && (
           <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
-            <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:12 }}>
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:12 }}>
               {SUNAT_SERVICIOS.map(cat => (
                 <div key={cat.categoria} style={{ background:C.bgCard, border:`1px solid ${cat.color}33`, borderTop:`3px solid ${cat.color}`, borderRadius:12, overflow:'hidden' }}>
                   <div style={{ padding:'12px 14px', borderBottom:`1px solid ${C.border}`, display:'flex', alignItems:'center', gap:8, background:`${cat.color}08` }}>
@@ -343,7 +354,17 @@ export const SunatPortalHub: React.FC = () => {
                         style={{ width:'100%', padding:'9px 14px', textAlign:'left', background:'none', border:'none', cursor:'pointer', display:'block', transition:'background 0.1s', fontFamily:"'Segoe UI', Arial, sans-serif" }}
                         onMouseEnter={e => (e.currentTarget.style.background = C.bgRow)}
                         onMouseLeave={e => (e.currentTarget.style.background = 'none')}>
-                        <div style={{ fontSize:12, fontWeight:600, color:C.text }}>{item.nombre}</div>
+                        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:6 }}>
+                          <span style={{ fontSize:12, fontWeight:600, color:C.text }}>{item.nombre}</span>
+                          <span style={{
+                            fontSize:9, fontWeight:800, padding:'1px 7px', borderRadius:20, whiteSpace:'nowrap', flexShrink:0,
+                            background: (item as any).sol ? `${C.yellow}22` : `${C.green}18`,
+                            color: (item as any).sol ? C.yellow : C.green,
+                            border: `1px solid ${(item as any).sol ? C.yellow+'44' : C.green+'33'}`,
+                          }}>
+                            {(item as any).sol ? '🔑 Clave SOL' : '🌐 Público'}
+                          </span>
+                        </div>
                         <div style={{ fontSize:10, color:C.dim, marginTop:2 }}>{item.desc}</div>
                       </button>
                     ))}
@@ -352,12 +373,19 @@ export const SunatPortalHub: React.FC = () => {
               ))}
             </div>
 
-            <div style={{ background:`${C.yellow}10`, border:`1px solid ${C.yellow}33`, borderRadius:10, padding:'12px 18px' }}>
-              <p style={{ margin:0, fontSize:12, color:C.muted }}>
-                <strong style={{ color:C.yellow }}>ℹ️ Nota:</strong> Los enlaces abren el portal oficial de SUNAT en una nueva pestaña.
-                SUNAT no permite embeber su sitio directamente. Para operar en SOL necesitas tu{' '}
-                <strong style={{ color:C.accent }}>Clave SOL</strong> (usuario y contraseña SUNAT).
-              </p>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
+              <div style={{ background:`${C.yellow}10`, border:`1px solid ${C.yellow}33`, borderRadius:10, padding:'12px 18px' }}>
+                <p style={{ margin:'0 0 6px', fontSize:11, fontWeight:700, color:C.yellow }}>🔑 Requiere Clave SOL</p>
+                <p style={{ margin:0, fontSize:11, color:C.muted }}>
+                  Los servicios marcados con 🔑 requieren tu Clave SOL (usuario y contraseña SUNAT). Obtenerla es gratis en <strong style={{color:C.accent}}>orientacion.sunat.gob.pe</strong> con tu DNI/RUC.
+                </p>
+              </div>
+              <div style={{ background:`${C.green}10`, border:`1px solid ${C.green}33`, borderRadius:10, padding:'12px 18px' }}>
+                <p style={{ margin:'0 0 6px', fontSize:11, fontWeight:700, color:C.green }}>🌐 Acceso público</p>
+                <p style={{ margin:0, fontSize:11, color:C.muted }}>
+                  Los marcados con 🌐 son de consulta libre. SUNAT no permite embeber su portal (bloquea iframes). Todos los links abren en pestaña nueva. URLs verificadas junio 2026.
+                </p>
+              </div>
             </div>
           </div>
         )}
@@ -474,7 +502,7 @@ export const SunatPortalHub: React.FC = () => {
                 placeholder="Ingresa el RUC (11 dígitos)"
                 style={{ flex:1, padding:'10px 14px', background:C.bgCard, border:`1px solid ${C.border}`, borderRadius:9, color:C.text, fontSize:14, outline:'none', fontFamily:"'Segoe UI', Arial, sans-serif" }} />
               <button type="button"
-                onClick={() => openSunat(`https://e-consultaruc.sunat.gob.pe/cl-ti-itmrconsruc/FrameCriterioBusquedaWeb.jsp`)}
+                onClick={() => openSunat('https://e-consultaruc.sunat.gob.pe/')}
                 style={{ padding:'10px 20px', background:`linear-gradient(135deg,${C.blue},${C.accent})`, border:'none', borderRadius:9, color:'#fff', fontWeight:800, fontSize:13, cursor:'pointer', fontFamily:"'Segoe UI', Arial, sans-serif" }}>
                 Consultar en SUNAT →
               </button>
