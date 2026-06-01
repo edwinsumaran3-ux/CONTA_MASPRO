@@ -341,6 +341,125 @@ const currentPlan = useMemo<Plan>(() => {
 const [accountDetailOpen, setAccountDetailOpen] = useState(false);
   const [chartAccounts, setChartAccounts] = useState<ChartAccountItem[]>([]);
   const bootstrapRanRef = useRef(false);
+  const welcomeAudioRef = useRef(false);
+
+  // ─── Bienvenida por voz al entrar al sistema ────────────────────────────────
+  useEffect(() => {
+    if (!window.speechSynthesis) return;
+
+    const planTexts: Record<string, string> = {
+      TRIAL_CONTADOR:
+        'Bienvenido a tu experiencia gratuita de CONTA PRO. ' +
+        'Tienes un mes completo sin costo para explorar el sistema. ' +
+        'Puedes gestionar hasta tres negocios, registrar facturas de compra y venta, ' +
+        'ver tu libro diario y generar reportes. ' +
+        'Al subir una imagen de factura, la inteligencia artificial la leerá automáticamente. ' +
+        'Al finalizar el mes, elige el plan que mejor se adapte a tus necesidades. ' +
+        'Estamos aquí para acompañarte en cada paso.',
+
+      BASICO_CONTADOR:
+        'Bienvenido de nuevo a CONTA PRO, plan Básico. ' +
+        'Con cincuenta dólares al mes tienes cinco negocios activos, ' +
+        'contabilidad completa, ventas, compras y todos los reportes esenciales. ' +
+        'Cuando quieras agregar más clientes o usar inteligencia artificial, ' +
+        'puedes subir al plan Plus o Pro en cualquier momento.',
+
+      PLUS_CONTADOR:
+        'Bienvenido a CONTA PRO, plan Plus. ' +
+        'Con noventa y nueve dólares al mes manejas diez negocios ' +
+        'y tienes cincuenta usos de inteligencia artificial por mes. ' +
+        'La IA de Gemini leerá tus facturas, clasificará las cuentas contables ' +
+        'y asignará los centros de costo automáticamente. ' +
+        'Ahorra horas de trabajo con solo subir la imagen del comprobante.',
+
+      PRO_CONTADOR:
+        'Bienvenido a CONTA PRO, plan Pro. ' +
+        'Con ciento veintinueve dólares al mes gestionas hasta quince negocios ' +
+        'y tienes cien usos de inteligencia artificial por mes. ' +
+        'Además tienes Business Intelligence avanzado y reportes completos. ' +
+        'Es la herramienta más completa para un contador con cartera amplia.',
+
+      MAESTRO_PLUS:
+        'Bienvenido al plan Maestro Plus de CONTA PRO. ' +
+        'Tienes acceso ilimitado a todos los módulos: ' +
+        'inventario, almacén, planillas, centros de costo e inteligencia artificial sin límite. ' +
+        'Tu implementación fue configurada especialmente para tu operación. ' +
+        'Recuerda que tienes soporte dedicado para cualquier consulta.',
+
+      PLUS_EMPRESA:
+        'Bienvenido a CONTA PRO, plan Plus Empresa. ' +
+        'Con ciento diecinueve dólares al mes tienes contabilidad completa, ' +
+        'ventas, compras, inventario y cien documentos procesados con inteligencia artificial. ' +
+        'Los módulos se activaron automáticamente según el rubro de tu empresa. ' +
+        'Si necesitas planillas o centros de costo, puedes subir al plan Pro.',
+
+      PRO_EMPRESA:
+        'Bienvenido a CONTA PRO, plan Pro Empresa. ' +
+        'Con ciento cuarenta y nueve dólares al mes tienes el ERP más completo: ' +
+        'contabilidad, ventas, compras, inventario, planillas, ' +
+        'centros de costo, almacenes múltiples y doscientos documentos de inteligencia artificial. ' +
+        'Tu empresa tiene todo lo que necesita para operar eficientemente.',
+
+      MAESTRO_EMPRESA:
+        'Bienvenido al plan Maestro Empresa de CONTA PRO. ' +
+        'Tienes el ERP completo personalizado para tu empresa. ' +
+        'Todos los módulos están activos y configurados según tu operación. ' +
+        'La inteligencia artificial trabaja en cada área del negocio. ' +
+        'Tu equipo de soporte dedicado está disponible para acompañarte.',
+
+      CONTA_PRO:
+        'Bienvenido Edwin. Estás en modo administrador total de CONTA PRO. ' +
+        'Desde aquí controlas todos los clientes, validas los pagos por Yape y Plin, ' +
+        'gestionas los códigos de acceso únicos y monitoras el consumo de inteligencia artificial. ' +
+        'El sistema está operando correctamente.',
+
+      // fallback planes legados
+      BASIC:    'Bienvenido a CONTA PRO. Tienes acceso a contabilidad, ventas y compras.',
+      PLUS:     'Bienvenido a CONTA PRO plan Plus. Tienes inventario, planillas e inteligencia artificial activos.',
+      PREMIUM:  'Bienvenido a CONTA PRO Premium. Tienes acceso completo a todos los módulos del sistema.',
+    };
+
+    const text = planTexts[userPlan] || planTexts.BASIC;
+
+    const playWelcome = () => {
+      if (welcomeAudioRef.current) return;
+      welcomeAudioRef.current = true;
+      window.removeEventListener('mousemove', playWelcome);
+
+      const speak = () => {
+        const voices = window.speechSynthesis.getVoices();
+        const voice =
+          voices.find(v => v.lang.startsWith('es') && /google/i.test(v.name) && /male|hombre|jorge|pablo|diego/i.test(v.name)) ||
+          voices.find(v => v.lang.startsWith('es') && /google/i.test(v.name)) ||
+          voices.find(v => v.lang === 'es-PE') ||
+          voices.find(v => v.lang.startsWith('es'));
+
+        const utter = new SpeechSynthesisUtterance(text);
+        if (voice) utter.voice = voice;
+        utter.lang   = 'es-PE';
+        utter.rate   = 0.91;
+        utter.pitch  = 0.88;
+        utter.volume = 0.82;
+        window.speechSynthesis.cancel();
+        window.speechSynthesis.speak(utter);
+      };
+
+      if (window.speechSynthesis.getVoices().length > 0) {
+        speak();
+      } else {
+        window.speechSynthesis.onvoiceschanged = () => {
+          window.speechSynthesis.onvoiceschanged = null;
+          speak();
+        };
+      }
+    };
+
+    window.addEventListener('mousemove', playWelcome);
+    return () => {
+      window.removeEventListener('mousemove', playWelcome);
+      window.speechSynthesis?.cancel();
+    };
+  }, [userPlan]);
 
   const [saleForm, setSaleForm] = useState<SaleFormData>({
     serie: 'F001',

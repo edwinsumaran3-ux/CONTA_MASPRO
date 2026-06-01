@@ -241,18 +241,131 @@ const PLANES_EMPRESA = [
   },
 ];
 
+// ─── Audios explicativos por plan ──────────────────────────────────────────
+const PLAN_AUDIO: Record<string, string> = {
+  TRIAL_CONTADOR:
+    'Plan gratuito de un mes. ' +
+    'Puedes gestionar hasta tres negocios sin ningún costo. ' +
+    'Incluye contabilidad completa, registro de ventas y compras, libro diario y reportes básicos. ' +
+    'Sin tarjeta de crédito. Sin permanencia. ' +
+    'Al terminar el mes eliges si continúas con un plan de pago. ' +
+    'Recuerda que cada negocio solo puede usar esta prueba gratuita una vez.',
+
+  BASICO_CONTADOR:
+    'Plan Básico, cincuenta dólares al mes. ' +
+    'Ideal para contadores que acaban de terminar su mes gratuito. ' +
+    'Gestiona hasta cinco negocios activos con contabilidad completa, ' +
+    'ventas, compras, libro diario y reportes estándar. ' +
+    'Sin inteligencia artificial, pero con todas las herramientas esenciales para llevar una contabilidad ordenada.',
+
+  PLUS_CONTADOR:
+    'Plan Plus, noventa y nueve dólares al mes. ' +
+    'El más popular entre los contadores. ' +
+    'Gestiona hasta diez negocios activos. ' +
+    'Incluye el lector de facturas con inteligencia artificial de Gemini: ' +
+    'solo subes la foto del comprobante y el sistema extrae todos los datos automáticamente. ' +
+    'Cincuenta documentos procesados por inteligencia artificial cada mes. ' +
+    'La diferencia con el plan Básico es más negocios y la inteligencia artificial.',
+
+  PRO_CONTADOR:
+    'Plan Pro, ciento veintinueve dólares al mes. ' +
+    'Para contadores con una cartera amplia de clientes. ' +
+    'Gestiona hasta quince negocios activos. ' +
+    'Cien documentos procesados con inteligencia artificial por mes. ' +
+    'Incluye Business Intelligence avanzado para analizar la situación financiera de todos tus clientes. ' +
+    'La diferencia con el Plus es más negocios y más usos de inteligencia artificial. ' +
+    'Los módulos contables son exactamente los mismos en Básico, Plus y Pro.',
+
+  MAESTRO_PLUS:
+    'Plan Maestro Plus, precio a tratar directamente con nosotros. ' +
+    'Es la solución completa para contadores que necesitan un ERP total. ' +
+    'Negocios ilimitados. Inventario y almacén activados. Planillas completas. ' +
+    'Centros de costo. Inteligencia artificial sin límite. ' +
+    'SUNAT integrado y auditoría avanzada. ' +
+    'Incluye implementación guiada, capacitación y soporte dedicado. ' +
+    'Si gestionas empresas complejas con inventario o personal, este es tu plan.',
+
+  PLUS_EMPRESA:
+    'Plan Plus Empresa, ciento diecinueve dólares al mes. ' +
+    'Diseñado para una empresa que quiere manejar su propia contabilidad. ' +
+    'Contabilidad completa, ventas, compras, inventario base ' +
+    'y cien documentos procesados con inteligencia artificial cada mes. ' +
+    'Los módulos se activan automáticamente según el rubro que elijas: ' +
+    'comercial, servicios, construcción, fabricación, minería u otro. ' +
+    'El sistema crea el plan contable específico para tu actividad económica.',
+
+  PRO_EMPRESA:
+    'Plan Pro Empresa, ciento cuarenta y nueve dólares al mes. ' +
+    'La opción más completa para empresas medianas. ' +
+    'Incluye todo lo del Plus más planillas, centros de costo, ' +
+    'almacenes múltiples para controlar distintos depósitos, ' +
+    'doscientos documentos procesados con inteligencia artificial al mes, ' +
+    'Business Intelligence avanzado y SUNAT integrado. ' +
+    'Si tu empresa tiene personal, inventario en varios almacenes y necesita reportes detallados, ' +
+    'el Pro Empresa es tu solución ideal.',
+
+  MAESTRO_EMPRESA:
+    'Plan Maestro Empresa, precio a tratar según el alcance. ' +
+    'Es una implementación personalizada de ERP completo para tu empresa. ' +
+    'Comenzamos con un diagnóstico detallado de tus procesos actuales. ' +
+    'Configuramos todos los módulos según tu realidad operativa. ' +
+    'Parametrizamos la inteligencia artificial por área de tu negocio. ' +
+    'Capacitamos a todo tu equipo. ' +
+    'Y brindamos soporte dedicado después de la puesta en marcha. ' +
+    'Si tu empresa tiene procesos complejos o múltiples áreas, ' +
+    'contáctanos para un diagnóstico sin compromiso.',
+};
+
+const speakPlan = (planId: string) => {
+  if (!window.speechSynthesis) return;
+  const text = PLAN_AUDIO[planId];
+  if (!text) return;
+
+  const speak = () => {
+    const voices = window.speechSynthesis.getVoices();
+    const voice =
+      voices.find(v => v.lang.startsWith('es') && /google/i.test(v.name) && /male|hombre|jorge|pablo|diego/i.test(v.name)) ||
+      voices.find(v => v.lang.startsWith('es') && /google/i.test(v.name)) ||
+      voices.find(v => v.lang === 'es-PE') ||
+      voices.find(v => v.lang.startsWith('es'));
+
+    const utter = new SpeechSynthesisUtterance(text);
+    if (voice) utter.voice = voice;
+    utter.lang   = 'es-PE';
+    utter.rate   = 0.91;
+    utter.pitch  = 0.88;
+    utter.volume = 0.85;
+    window.speechSynthesis.cancel(); // para el audio anterior inmediatamente
+    window.speechSynthesis.speak(utter);
+  };
+
+  if (window.speechSynthesis.getVoices().length > 0) {
+    speak();
+  } else {
+    window.speechSynthesis.onvoiceschanged = () => {
+      window.speechSynthesis.onvoiceschanged = null;
+      speak();
+    };
+  }
+};
+
 // ─── Componente ─────────────────────────────────────────────────────────────
 export const PlanSelectorModal: React.FC<Props> = ({ defaultType, onSelect, onClose }) => {
   const [tipo, setTipo] = useState<UserType>(defaultType ?? 'CONTADOR');
   const [hover, setHover] = useState('');
+  const [activePlan, setActivePlan] = useState('');
 
   const planes = tipo === 'CONTADOR' ? PLANES_CONTADOR : PLANES_EMPRESA;
 
   return (
     <>
+      <style>{`
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+      `}</style>
+
       {/* ── Overlay ── */}
       <div
-        onClick={onClose}
+        onClick={() => { window.speechSynthesis?.cancel(); onClose(); }}
         style={{
           position: 'fixed', inset: 0,
           background: 'rgba(2,8,18,0.88)',
@@ -316,7 +429,7 @@ export const PlanSelectorModal: React.FC<Props> = ({ defaultType, onSelect, onCl
                 </button>
               ))}
             </div>
-            <button type="button" onClick={onClose} style={{
+            <button type="button" onClick={() => { window.speechSynthesis?.cancel(); onClose(); }} style={{
               width: 34, height: 34, borderRadius: '50%',
               background: 'rgba(255,255,255,0.06)', border: `1px solid ${C.border}`,
               color: C.muted, fontSize: 16, cursor: 'pointer',
@@ -354,7 +467,10 @@ export const PlanSelectorModal: React.FC<Props> = ({ defaultType, onSelect, onCl
                   transition: 'all 0.2s',
                   cursor: 'pointer',
                 }}
-                onClick={() => onSelect({ id: pl.id, name: pl.name, price: pl.price, userType: tipo })}
+                onClick={() => {
+                  setActivePlan(pl.id);
+                  speakPlan(pl.id);
+                }}
               >
                 {/* Tag */}
                 {pl.tag && (
@@ -423,19 +539,34 @@ export const PlanSelectorModal: React.FC<Props> = ({ defaultType, onSelect, onCl
                   </p>
                 )}
 
-                {/* Botón */}
-                <button type="button" style={{
-                  width: '100%', padding: '10px',
-                  background: isHover
-                    ? `linear-gradient(135deg, ${pl.color}, ${pl.color}cc)`
-                    : `${pl.color}18`,
-                  border: `1.5px solid ${pl.color}66`,
-                  borderRadius: 9, color: isHover ? '#fff' : pl.color,
-                  fontWeight: 800, fontSize: 12, cursor: 'pointer',
-                  fontFamily: "'Segoe UI', Arial, sans-serif",
-                  transition: 'all 0.2s',
-                  boxShadow: isHover ? `0 4px 20px ${pl.color}44` : 'none',
-                }}>
+                {/* Indicador audio activo */}
+                {activePlan === pl.id && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 8, fontSize: 10, color: pl.color }}>
+                    <span style={{ animation: 'pulse 1s infinite' }}>🔊</span>
+                    <span>Escuchando explicación...</span>
+                  </div>
+                )}
+
+                {/* Botón elegir */}
+                <button
+                  type="button"
+                  onClick={e => {
+                    e.stopPropagation();
+                    window.speechSynthesis?.cancel();
+                    onSelect({ id: pl.id, name: pl.name, price: pl.price, userType: tipo });
+                  }}
+                  style={{
+                    width: '100%', padding: '10px',
+                    background: isHover || activePlan === pl.id
+                      ? `linear-gradient(135deg, ${pl.color}, ${pl.color}cc)`
+                      : `${pl.color}18`,
+                    border: `1.5px solid ${pl.color}66`,
+                    borderRadius: 9, color: isHover || activePlan === pl.id ? '#fff' : pl.color,
+                    fontWeight: 800, fontSize: 12, cursor: 'pointer',
+                    fontFamily: "'Segoe UI', Arial, sans-serif",
+                    transition: 'all 0.2s',
+                    boxShadow: isHover || activePlan === pl.id ? `0 4px 20px ${pl.color}44` : 'none',
+                  }}>
                   {isMaestro ? 'Solicitar →' : pl.price === 0 ? 'Comenzar gratis →' : `Elegir ${pl.name} →`}
                 </button>
               </div>
