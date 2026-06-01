@@ -5,6 +5,10 @@
   "installCommand": "npm install",
   "framework": null,
 
+  "env": {
+    "VITE_GOOGLE_CLIENT_ID": "956223061656-n8ufvfnvm5g16lcqdi9mid6o06bvncgi.apps.googleusercontent.com"
+  },
+
   "rewrites": [
     {
       "source": "/api/:path*",
