@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { PlanSelectorModal } from '../../components/PlanSelectorModal';
 import type { PlanSelected } from '../../components/PlanSelectorModal';
+import { useTenantStore } from '../../hooks/useTenantStore';
+import type { Rubro } from '../../config/itemCatalog';
 
 // ─── Tipos globales Google GSI + OAuth2 ────────────────────────────────────
 declare global {
@@ -1139,8 +1141,26 @@ export const LoginScreen: React.FC<Props> = ({ onLogin }) => {
               </div>
             )}
 
-            <button type="button" onClick={() => onLogin('ACCOUNTANT', accountType === 'ACCOUNTANT' ? 'Contador' : 'Empresa', selectedPlan || 'TRIAL_CONTADOR')} style={btn(planColors[selectedPlan] || P.accent)}>
-              {isMaestro ? '📩 Enviar solicitud y entrar al demo' : '✅ Activar cuenta y entrar al sistema'}
+            <button type="button" onClick={() => {
+              const { addCompany } = useTenantStore.getState();
+              if (accountType === 'COMPANY' && compData.ruc && compData.razonSocial) {
+                // Empresa registra su propia empresa como tenant
+                const rubroMap: Record<string, Rubro> = {
+                  COMERCIAL: 'CO', SERVICIOS: 'GE', CONSTRUCCION: 'CM',
+                  FABRICACION: 'FA', MINERIA: 'MI', OTRO: 'GE',
+                };
+                addCompany({
+                  id: `tenant-${Date.now()}`,
+                  ruc: compData.ruc,
+                  businessName: compData.razonSocial,
+                  rubro: rubroMap[selectedRubro] ?? 'GE',
+                  rubros: [rubroMap[selectedRubro] ?? 'GE'],
+                });
+              }
+              // Contadores empiezan sin empresas — las agregan desde el workspace
+              onLogin('ACCOUNTANT', accountType === 'ACCOUNTANT' ? `${acctData.nombres} ${acctData.apellidos}`.trim() || 'Contador' : compData.razonSocial || 'Empresa', selectedPlan || 'TRIAL_CONTADOR');
+            }} style={btn(planColors[selectedPlan] || P.accent)}>
+              {isMaestro ? '📩 Enviar solicitud y entrar al sistema' : '✅ Activar cuenta y entrar al sistema'}
             </button>
 
             <button type="button" onClick={() => setStep(accountType === 'ACCOUNTANT' ? 'PLAN_ACCOUNTANT' : 'RUBRO')} style={{ ...btn(P.accent, true), marginTop: 10 }}>
