@@ -881,10 +881,11 @@ export const LoginScreen: React.FC<Props> = ({ onLogin }) => {
     const handlePlanSelect = (plan: PlanSelected) => {
       setSelectedPlan(plan.id);
       setSelectedPlanName(plan.name);
-      const isMaestro = plan.id.includes('MAESTRO');
-      if (isMaestro || step === 'PLAN_ACCOUNTANT') {
+      if (step === 'PLAN_ACCOUNTANT') {
+        // Contadores no tienen rubro — van directo a API config
         setStep('API_CONFIG');
       } else {
+        // Todas las empresas, incluyendo Maestro, pasan por rubro
         setStep('RUBRO');
       }
     };
