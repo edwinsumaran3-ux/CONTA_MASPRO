@@ -178,7 +178,7 @@ const generateCode = () => {
 };
 
 // ─── Componente principal ───────────────────────────────────────────────────
-type Tab = 'INICIO' | 'PAGOS' | 'CLIENTES' | 'CODIGOS' | 'CONSUMO' | 'ALERTAS' | 'CONFIG';
+type Tab = 'INICIO' | 'PAGOS' | 'CLIENTES' | 'CODIGOS' | 'CONSUMO' | 'ALERTAS' | 'PLANES' | 'CONFIG';
 
 export const OwnerDashboard = () => {
   const [tab, setTab] = useState<Tab>('INICIO');
@@ -220,6 +220,7 @@ export const OwnerDashboard = () => {
     { id: 'CODIGOS',  label: 'Códigos',   icon: '🔑', badge: kpis.codBloqueados },
     { id: 'CONSUMO',  label: 'Consumo IA',icon: '🤖' },
     { id: 'ALERTAS',  label: 'Alertas',   icon: '🚨', badge: kpis.alertasAlto },
+    { id: 'PLANES',   label: 'Planes',    icon: '📋' },
     { id: 'CONFIG',   label: 'Config',    icon: '⚙️' },
   ];
 
@@ -690,6 +691,180 @@ export const OwnerDashboard = () => {
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {/* ═══════════════ PLANES ═══════════════ */}
+        {tab === 'PLANES' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+            <h2 style={{ margin: 0, fontSize: 15, fontWeight: 800, color: C.text }}>📋 Todos los planes CONTA_PRO</h2>
+
+            {/* ─ CONTADORES ─ */}
+            <div>
+              <p style={{ margin: '0 0 10px', fontSize: 13, fontWeight: 800, color: C.accent, letterSpacing: '0.06em' }}>👤 PLANES PARA CONTADORES INDEPENDIENTES</p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10 }}>
+                {[
+                  {
+                    id: 'TRIAL',  name: '1 Mes Gratis', price: 'S/ 0', period: '1 mes', icon: '🎁', color: C.green,
+                    negocios: 3, ia: 'Sin IA', modulos: ['Contabilidad', 'Ventas', 'Compras', 'Reportes básicos'],
+                    restricciones: ['Solo 1 vez por contador', 'Negocios no pueden repetir prueba', 'Sin IA ni OCR'],
+                    clientes: clientes.filter(c => c.plan === 'TRIAL_CONTADOR').length,
+                  },
+                  {
+                    id: 'BASICO', name: 'Básico', price: 'S/ XX', period: '/mes', icon: '📊', color: C.muted,
+                    negocios: 5, ia: 'Sin IA', modulos: ['Contabilidad completa', 'Ventas', 'Compras', 'Reportes'],
+                    restricciones: ['Sin IA ni OCR', 'Sin inventario', 'Sin planillas'],
+                    clientes: clientes.filter(c => c.plan === 'BASICO_CONTADOR').length,
+                  },
+                  {
+                    id: 'PLUS',   name: 'Plus', price: 'S/ XX', period: '/mes', icon: '⚡', color: C.blue,
+                    negocios: 10, ia: '50 usos/mes', modulos: ['Contabilidad completa', 'Ventas', 'Compras', 'OCR Gemini', 'IA 50 docs/mes', 'Reportes'],
+                    restricciones: ['Sin inventario', 'Sin planillas'],
+                    clientes: clientes.filter(c => c.plan === 'PLUS_CONTADOR').length,
+                  },
+                  {
+                    id: 'PRO',    name: 'Pro', price: 'S/ XX', period: '/mes', icon: '🚀', color: C.indigo || C.blue,
+                    negocios: 15, ia: '100 usos/mes', modulos: ['Contabilidad completa', 'Ventas', 'Compras', 'OCR Gemini', 'IA 100 docs/mes', 'BI avanzado', 'Reportes'],
+                    restricciones: ['Sin inventario', 'Sin planillas'],
+                    clientes: clientes.filter(c => c.plan === 'PRO_CONTADOR').length,
+                  },
+                  {
+                    id: 'MAESTRO+', name: 'Maestro+', price: 'A tratar', period: '', icon: '👑', color: C.purple,
+                    negocios: 0, ia: 'Ilimitada', modulos: ['Contabilidad completa', 'Ventas', 'Compras', 'Inventario', 'Almacén', 'Planillas', 'Centros de costo', 'OCR IA ilimitado', 'ERP completo', 'SUNAT', 'Auditoría'],
+                    restricciones: ['Implementación guiada', 'A tratar con el dueño'],
+                    clientes: clientes.filter(c => c.plan === 'MAESTRO_PLUS').length,
+                  },
+                ].map((pl) => (
+                  <div key={pl.id} style={{
+                    background: C.bgCard, border: `1px solid ${pl.color}44`,
+                    borderTop: `3px solid ${pl.color}`, borderRadius: 12,
+                    padding: '16px 14px', display: 'flex', flexDirection: 'column', gap: 8,
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: 22 }}>{pl.icon}</span>
+                      <span style={{ background: `${pl.color}22`, color: pl.color, fontSize: 9, fontWeight: 800, padding: '2px 8px', borderRadius: 20 }}>
+                        {pl.clientes} cliente{pl.clientes !== 1 ? 's' : ''}
+                      </span>
+                    </div>
+                    <div style={{ color: pl.color, fontWeight: 900, fontSize: 14 }}>{pl.name}</div>
+                    <div style={{ color: C.text, fontWeight: 800, fontSize: 18, lineHeight: 1 }}>
+                      {pl.price}<span style={{ color: C.dim, fontSize: 10, fontWeight: 400 }}>{pl.period}</span>
+                    </div>
+                    <div style={{ color: C.muted, fontSize: 11 }}>
+                      {pl.negocios === 0 ? '♾️ Negocios ilimitados' : `📁 ${pl.negocios} negocios`}
+                    </div>
+                    <div style={{ background: `${pl.color}18`, color: pl.color, fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 6, textAlign: 'center' }}>
+                      🤖 {pl.ia}
+                    </div>
+                    <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 8 }}>
+                      <p style={{ margin: '0 0 5px', fontSize: 10, color: C.muted, fontWeight: 700, textTransform: 'uppercase' }}>Módulos activos</p>
+                      {pl.modulos.map((m, i) => (
+                        <div key={i} style={{ fontSize: 10, color: C.dim, padding: '1px 0', display: 'flex', gap: 4 }}>
+                          <span style={{ color: pl.color }}>✓</span> {m}
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 8 }}>
+                      <p style={{ margin: '0 0 5px', fontSize: 10, color: C.red, fontWeight: 700, textTransform: 'uppercase' }}>Restricciones</p>
+                      {pl.restricciones.map((r, i) => (
+                        <div key={i} style={{ fontSize: 10, color: C.dim, padding: '1px 0', display: 'flex', gap: 4 }}>
+                          <span style={{ color: C.red }}>✕</span> {r}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* ─ EMPRESAS ─ */}
+            <div>
+              <p style={{ margin: '0 0 10px', fontSize: 13, fontWeight: 800, color: C.green, letterSpacing: '0.06em' }}>🏢 PLANES PARA EMPRESAS / NEGOCIOS</p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+                {[
+                  {
+                    id: 'PLUS_EMPRESA', name: 'Plus Empresa', price: 'S/ XX', period: '/mes', icon: '⚡', color: C.accent,
+                    ia: '100 docs/mes', modulos: ['Contabilidad', 'Ventas', 'Compras', 'Inventario base', 'OCR IA 100 docs', 'Módulos por rubro', 'Plan contable por actividad'],
+                    noIncluye: ['Planillas', 'Centros de costo', 'Almacenes múltiples'],
+                    clientes: clientes.filter(c => c.plan === 'PLUS_EMPRESA').length,
+                  },
+                  {
+                    id: 'PRO_EMPRESA',  name: 'Pro Empresa', price: 'S/ XX', period: '/mes', icon: '🚀', color: C.blue,
+                    ia: '200 docs/mes', modulos: ['Contabilidad', 'Ventas', 'Compras', 'Inventario completo', 'Planillas', 'OCR IA 200 docs', 'Centros de costo', 'Almacenes múltiples', 'BI avanzado', 'SUNAT'],
+                    noIncluye: ['Implementación personalizada'],
+                    clientes: clientes.filter(c => c.plan === 'PRO_EMPRESA').length,
+                  },
+                  {
+                    id: 'MAESTRO',     name: 'Maestro Empresa', price: 'A tratar', period: '', icon: '👑', color: C.purple,
+                    ia: 'Ilimitada + por proceso', modulos: ['ERP completo personalizado', 'Diagnóstico de procesos', 'Todos los módulos', 'Múltiples usuarios', 'IA configurada por área', 'SUNAT completo', 'Auditoría', 'Integración bancos/SAP/Odoo', 'Capacitación', 'Soporte dedicado'],
+                    noIncluye: [],
+                    clientes: clientes.filter(c => c.plan === 'MAESTRO_EMPRESA').length,
+                  },
+                ].map((pl) => (
+                  <div key={pl.id} style={{
+                    background: C.bgCard, border: `1px solid ${pl.color}44`,
+                    borderTop: `3px solid ${pl.color}`, borderRadius: 12, padding: '18px 16px',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontSize: 24 }}>{pl.icon}</span>
+                        <div>
+                          <div style={{ color: pl.color, fontWeight: 900, fontSize: 14 }}>{pl.name}</div>
+                          <div style={{ color: C.text, fontWeight: 800, fontSize: 20, lineHeight: 1 }}>
+                            {pl.price}<span style={{ color: C.dim, fontSize: 11, fontWeight: 400 }}>{pl.period}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{ background: `${pl.color}22`, color: pl.color, fontSize: 10, fontWeight: 800, padding: '4px 12px', borderRadius: 20, textAlign: 'center' }}>
+                        {pl.clientes} cliente{pl.clientes !== 1 ? 's' : ''}
+                      </div>
+                    </div>
+                    <div style={{ background: `${pl.color}18`, color: pl.color, fontSize: 11, fontWeight: 700, padding: '5px 10px', borderRadius: 8, marginBottom: 12, textAlign: 'center' }}>
+                      🤖 IA: {pl.ia}
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                      <div>
+                        <p style={{ margin: '0 0 6px', fontSize: 10, color: pl.color, fontWeight: 700, textTransform: 'uppercase' }}>✓ Incluye</p>
+                        {pl.modulos.map((m, i) => (
+                          <div key={i} style={{ fontSize: 11, color: C.dim, padding: '2px 0', display: 'flex', gap: 5 }}>
+                            <span style={{ color: C.green }}>✓</span> {m}
+                          </div>
+                        ))}
+                      </div>
+                      {pl.noIncluye.length > 0 && (
+                        <div>
+                          <p style={{ margin: '0 0 6px', fontSize: 10, color: C.red, fontWeight: 700, textTransform: 'uppercase' }}>✕ No incluye</p>
+                          {pl.noIncluye.map((r, i) => (
+                            <div key={i} style={{ fontSize: 11, color: C.dim, padding: '2px 0', display: 'flex', gap: 5 }}>
+                              <span style={{ color: C.red }}>✕</span> {r}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* ─ SUPER ADMIN ─ */}
+            <div style={{ background: `linear-gradient(135deg, ${C.purple}18, ${C.accent}10)`, border: `1px solid ${C.purple}44`, borderRadius: 12, padding: '16px 20px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+                <span style={{ fontSize: 28 }}>⭐</span>
+                <div>
+                  <p style={{ margin: 0, fontSize: 14, fontWeight: 900, color: C.purple }}>CONTA_PRO — Dueño del Sistema</p>
+                  <p style={{ margin: 0, fontSize: 11, color: C.muted }}>Acceso total · Sin límites · Panel de administración</p>
+                </div>
+                <Badge label="SOLO TÚ" color={C.purple} />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+                {['Todos los módulos activos', 'IA ilimitada', 'Todos los clientes visibles', 'Validación de pagos Yape/Plin', 'Gestión de códigos únicos', 'Alertas del sistema', 'Configuración global', 'Sin fecha de vencimiento'].map((f, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: C.muted }}>
+                    <span style={{ color: C.purple, fontWeight: 700 }}>⭐</span> {f}
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         )}
 
