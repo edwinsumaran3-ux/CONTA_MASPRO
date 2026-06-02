@@ -212,60 +212,100 @@ export const LoginScreen: React.FC<Props> = ({ onLogin }) => {
   const cardRef = useRef<HTMLDivElement>(null);
   const welcomePlayedRef = useRef(false);
 
-  // ─── Audio de bienvenida — Web Speech API (Google TTS gratis) ──────────────
-  // Se activa UNA sola vez al primer movimiento del mouse
-  useEffect(() => {
+  // ─── Audio explicativo por paso — Web Speech API ────────────────────────────
+  const STEP_AUDIO: Partial<Record<Step, string>> = {
+    LANDING:
+      'Bienvenido a CONTA PRO. Tu sistema contable inteligente potenciado con inteligencia artificial. ' +
+      'Puedes ingresar con tu cuenta existente, continuar con Google, o crear una cuenta nueva completamente gratis.',
+
+    REG_TYPE:
+      'Paso uno: elige cómo vas a usar CONTA PRO. ' +
+      'Si eres Contador independiente y llevas la contabilidad de varios negocios, elige Contador. ' +
+      'Si tienes una empresa propia y quieres gestionar su contabilidad directamente, elige Empresa o Negocio.',
+
+    REG_ACCOUNTANT:
+      'Paso dos: ingresa tus datos personales como contador. ' +
+      'Completa tu nombre, apellidos, número de D N I, teléfono y correo electrónico. ' +
+      'Estos datos son los de tu perfil profesional. Los campos de colegiatura y especialidad son opcionales.',
+
+    REG_COMPANY:
+      'Paso dos: ingresa los datos de tu empresa. ' +
+      'Necesitamos el R U C de once dígitos, la razón social registrada en SUNAT, y los datos del administrador principal. ' +
+      'El correo y la contraseña que ingreses serán tus credenciales de acceso.',
+
+    PLAN_ACCOUNTANT:
+      'Paso tres: elige tu plan de contador. ' +
+      'El plan gratuito incluye un mes sin costo y hasta tres negocios. ' +
+      'El plan Básico te permite gestionar hasta cinco empresas. ' +
+      'Plus y Pro incluyen inteligencia artificial para leer facturas automáticamente. ' +
+      'El plan Maestro Plus es el E R P completo con empresas ilimitadas.',
+
+    PLAN_COMPANY:
+      'Paso tres: elige el plan para tu empresa. ' +
+      'El plan Plus Empresa incluye cien documentos procesados con inteligencia artificial por mes. ' +
+      'El plan Pro duplica esa capacidad y agrega módulos avanzados. ' +
+      'El plan Maestro es el E R P personalizado con implementación guiada por nuestro equipo.',
+
+    RUBRO:
+      'Paso cuatro: selecciona el rubro o actividad económica de tu empresa. ' +
+      'Esto es muy importante porque CONTA PRO activará automáticamente los módulos correctos: ' +
+      'inventario, activos, planillas o centros de costo, según lo que necesita tu sector. ' +
+      'Elige el que mejor describa tu actividad principal.',
+
+    API_CONFIG:
+      'Paso cinco: configura tu clave de inteligencia artificial de Google Gemini. ' +
+      'Con tu propia clave gratuita, la inteligencia artificial leerá tus facturas automáticamente ' +
+      'y tendrás un millón de tokens gratis por mes en tu propia cuenta de Google. ' +
+      'Abre el enlace, crea tu clave en cinco minutos, y pégala aquí. Si prefieres hacerlo después, puedes omitir este paso.',
+
+    CONFIRM:
+      'Último paso: revisa el resumen de tu cuenta antes de activarla. ' +
+      'Verifica tu tipo de cuenta, el plan seleccionado y el rubro. ' +
+      'Si todo está correcto, haz clic en Activar cuenta y entrar al sistema. ' +
+      'Si necesitas modificar algo, usa el botón de volver.',
+
+    ADD_COMPANY:
+      'Ya casi terminamos. Ahora registra las empresas cuyos libros contables vas a manejar. ' +
+      'Ingresa el R U C de once dígitos, la razón social y el rubro de cada empresa. ' +
+      'Según tu plan, puedes agregar hasta ' +
+      'tres empresas en el plan gratuito, cinco en básico, diez en Plus, y quince en Pro. ' +
+      'Cuando hayas agregado al menos una empresa, haz clic en Entrar al sistema.',
+  };
+
+  const speakStep = (s: Step) => {
     if (typeof window === 'undefined' || !window.speechSynthesis) return;
-
-    const TEXT =
-      'Bienvenido a CONTA PRO. ' +
-      'Tu sistema contable inteligente, potenciado con inteligencia artificial, ' +
-      'listo para impulsar el éxito de tu empresa.';
-
-    const speak = () => {
+    const text = STEP_AUDIO[s];
+    if (!text) return;
+    const doSpeak = () => {
       const voices = window.speechSynthesis.getVoices();
-
-      // Prioridad: Google español > cualquier voz española masculina > primera española
       const voice =
-        voices.find(v => v.lang.startsWith('es') && /google/i.test(v.name) && /male|hombre|jorge|pablo|diego/i.test(v.name)) ||
         voices.find(v => v.lang.startsWith('es') && /google/i.test(v.name)) ||
         voices.find(v => v.lang === 'es-PE') ||
-        voices.find(v => v.lang === 'es-ES') ||
         voices.find(v => v.lang.startsWith('es'));
-
-      const utter = new SpeechSynthesisUtterance(TEXT);
-      if (voice) utter.voice = voice;
-      utter.lang  = 'es-PE';
-      utter.rate  = 0.91;   // ritmo natural (1 = normal)
-      utter.pitch = 0.88;   // tono masculino (1 = normal)
-      utter.volume = 0.85;
-
-      window.speechSynthesis.cancel(); // limpiar cola
-      window.speechSynthesis.speak(utter);
+      const u = new SpeechSynthesisUtterance(text);
+      if (voice) u.voice = voice;
+      u.lang = 'es-PE'; u.rate = 0.91; u.pitch = 0.88; u.volume = 0.85;
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(u);
     };
+    if (window.speechSynthesis.getVoices().length > 0) {
+      doSpeak();
+    } else {
+      window.speechSynthesis.onvoiceschanged = () => {
+        window.speechSynthesis.onvoiceschanged = null;
+        doSpeak();
+      };
+    }
+  };
 
-    const onFirstMove = () => {
-      if (welcomePlayedRef.current) return;
-      welcomePlayedRef.current = true;
-      window.removeEventListener('mousemove', onFirstMove);
+  // Disparar audio al cambiar de paso
+  useEffect(() => {
+    speakStep(step);
+    return () => { window.speechSynthesis?.cancel(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
 
-      // Las voces pueden no estar listas aún en algunos navegadores
-      if (window.speechSynthesis.getVoices().length > 0) {
-        speak();
-      } else {
-        window.speechSynthesis.onvoiceschanged = () => {
-          window.speechSynthesis.onvoiceschanged = null;
-          speak();
-        };
-      }
-    };
-
-    window.addEventListener('mousemove', onFirstMove);
-    return () => {
-      window.removeEventListener('mousemove', onFirstMove);
-      window.speechSynthesis?.cancel();
-    };
-  }, []);
+  // El audio de cada paso (incluido LANDING) lo maneja speakStep via useEffect([step])
 
   // ─── Google OAuth2 popup (más confiable que One Tap) ────────────────────
   useEffect(() => {
