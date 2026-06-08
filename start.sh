@@ -3,14 +3,16 @@ set -e
 
 echo "=== CONTA_PRO startup ==="
 
-# Validate DATABASE_URL
+# Strip carriage returns and trim whitespace from DATABASE_URL (Windows CRLF issue)
+DATABASE_URL=$(printf '%s' "${DATABASE_URL}" | tr -d '\r\n')
+export DATABASE_URL
+
 if [ -z "$DATABASE_URL" ]; then
-  echo "ERROR: DATABASE_URL is not set. Add it in Railway variables."
+  echo "ERROR: DATABASE_URL is not set."
   exit 1
 fi
 
-FIRST30=$(echo "$DATABASE_URL" | cut -c1-30)
-echo "DATABASE_URL prefix: $FIRST30"
+echo "DATABASE_URL prefix: $(echo "$DATABASE_URL" | cut -c1-30)"
 
 # Normalize scheme for asyncpg
 case "$DATABASE_URL" in
