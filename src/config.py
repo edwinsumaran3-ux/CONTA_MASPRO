@@ -1,3 +1,4 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -6,6 +7,17 @@ class Settings(BaseSettings):
     app_name: str = "CONTA_PRO Enterprise"
     app_env: str = "development"
     database_url: str = "postgresql+asyncpg://contapro:contapro@localhost:5432/contapro"
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def _fix_db_scheme(cls, v: str) -> str:
+        # Railway y otros proveedores usan postgresql:// o postgres://; asyncpg requiere postgresql+asyncpg://
+        if isinstance(v, str):
+            if v.startswith("postgres://"):
+                v = "postgresql+asyncpg://" + v[len("postgres://"):]
+            elif v.startswith("postgresql://"):
+                v = "postgresql+asyncpg://" + v[len("postgresql://"):]
+        return v
     redis_url: str = "redis://localhost:6379/0"
     ledger_hmac_secret: str = "change-this-secret-min-32-chars"
     access_token_minutes: int = 15
