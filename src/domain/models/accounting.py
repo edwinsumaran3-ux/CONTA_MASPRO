@@ -153,7 +153,7 @@ class JournalEntry(Base):
     previous_hash: Mapped[str] = mapped_column(Text, nullable=False)
     row_hash: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="POSTED")
-    created_by: Mapped[str] = mapped_column(UUID(as_uuid=True), nullable=False)
+    created_by: Mapped[str | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     lines: Mapped[list["JournalLine"]] = relationship(back_populates="entry", cascade="all, delete-orphan", lazy="selectin")
 
@@ -333,7 +333,7 @@ class DepreciationRun(Base):
     total_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=0)
     journal_entry_id: Mapped[str | None] = mapped_column(UUID(as_uuid=True))
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="POSTED")
-    created_by: Mapped[str] = mapped_column(UUID(as_uuid=True), nullable=False)
+    created_by: Mapped[str | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 class Provision(Base):
@@ -362,7 +362,7 @@ class AnnualClosingRun(Base):
     class_8_9_result: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     generated_entries: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     audit_summary: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
-    created_by: Mapped[str] = mapped_column(UUID(as_uuid=True), nullable=False)
+    created_by: Mapped[str | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 class TaxDetermination(Base):

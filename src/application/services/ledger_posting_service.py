@@ -45,18 +45,14 @@ class LedgerPostingService:
         self.expert_guard.enforce_or_raise(payload)
 
 
-    SYSTEM_USER_UUID = UUID("00000000-0000-0000-0000-000000000001")
-
     def _actor_uuid(self, value: str | None):
-        """Dev tokens can send user_id='erp.operator'. DB columns are UUID with FK to users.
-        Use the fixed system user UUID that must exist in users.
-        """
+        """Convierte user_id a UUID. Retorna None para entradas de sistema (no FK a users)."""
         if not value:
-            return self.SYSTEM_USER_UUID
+            return None
         try:
             return UUID(str(value))
         except Exception:
-            return self.SYSTEM_USER_UUID
+            return None
 
     def _json_safe(self, value):
         """Convert Decimal/date/datetime/UUID recursively before writing JSONB."""
