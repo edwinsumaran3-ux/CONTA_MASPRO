@@ -756,11 +756,20 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
 
   const loadChartAccounts = async (bearerToken: string) => {
     try {
-      const res = await fetch(`${API_BASE}/master/chart-accounts`, {
-        headers: authHeaders(bearerToken, getTenantId()),
-      });
+      const h = authHeaders(bearerToken, getTenantId());
+      const res = await fetch(`${API_BASE}/master/chart-accounts`, { headers: h });
       if (res.ok) {
         const data = await res.json();
+        if (Array.isArray(data) && data.length === 0) {
+          // New tenant — auto-seed PCGE and reload
+          await fetch(`${API_BASE}/master/chart-accounts/seed-pcge`, { method: 'POST', headers: h });
+          const res2 = await fetch(`${API_BASE}/master/chart-accounts`, { headers: h });
+          if (res2.ok) {
+            const data2 = await res2.json();
+            setChartAccounts(Array.isArray(data2) ? data2 : []);
+            return;
+          }
+        }
         setChartAccounts(Array.isArray(data) ? data : []);
       }
     } catch {

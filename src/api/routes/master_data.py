@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 
 from src.api.dependencies import get_current_context, require_roles
+from src.data.pcge import PCGE_ACCOUNTS
 from src.domain.models.accounting import ChartAccount, CostCenter
 from src.infrastructure.db.session import AsyncSessionLocal
 from src.infrastructure.unit_of_work import UnitOfWork
@@ -82,6 +85,43 @@ async def list_chart_accounts(limit: int = 500, ctx=Depends(require_roles("ADMIN
             }
             for row in rows
         ]
+
+
+@router.post("/chart-accounts/seed-pcge")
+async def seed_pcge_accounts(ctx=Depends(require_roles("ADMIN", "CONTROLLER", "ACCOUNTANT"))):
+    """Seed the standard Peruvian PCGE chart of accounts for this tenant.
+    Idempotent: if any accounts already exist, returns them without re-inserting.
+    """
+    tenant_id = ctx["tenant_id"]
+
+    async with UnitOfWork(AsyncSessionLocal, tenant_id) as uow:
+        existing_count = await uow.session.scalar(
+            select(func.count(ChartAccount.id)).where(ChartAccount.tenant_id == tenant_id)
+        )
+        if existing_count:
+            return {"ok": True, "message": f"Ya tiene {existing_count} cuentas registradas", "inserted": 0}
+
+    inserted = 0
+    async with UnitOfWork(AsyncSessionLocal, tenant_id) as uow:
+        for code, name, statement, nature, acc_cc, acc_partner in PCGE_ACCOUNTS:
+            account = ChartAccount(
+                id=uuid4(),
+                tenant_id=tenant_id,
+                company_id=None,
+                code=code,
+                name=name,
+                account_class=code[:2],
+                statement=statement,
+                nature=nature,
+                accepts_cost_center=acc_cc,
+                accepts_partner=acc_partner,
+                is_active=True,
+            )
+            uow.session.add(account)
+            inserted += 1
+        await uow.commit()
+
+    return {"ok": True, "inserted": inserted, "message": f"PCGE cargado: {inserted} cuentas"}
 
 
 @router.post("/chart-accounts/upsert")

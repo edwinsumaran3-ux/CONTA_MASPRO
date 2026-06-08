@@ -37,9 +37,12 @@ async def get_current_context(
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-    tenant_id = x_tenant_id or payload.get("tenant_id")
-    if not tenant_id or tenant_id != payload.get("tenant_id"):
-        raise HTTPException(status_code=403, detail="Tenant mismatch")
+    # JWT is the source of truth for tenant; X-Tenant-Id header is informational only.
+    # Checking the header caused race-condition 403s when the React state hadn't
+    # settled yet (company selected but store not yet updated when header was sent).
+    tenant_id = payload.get("tenant_id")
+    if not tenant_id:
+        raise HTTPException(status_code=403, detail="No tenant in token")
 
     set_request_context(tenant_id, payload.get("sub"), trace_id)
 
