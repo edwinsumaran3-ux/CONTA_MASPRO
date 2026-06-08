@@ -1,14 +1,16 @@
+from datetime import date as date_type
 from decimal import Decimal
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
+from sqlalchemy import select, text
 
 from src.api.dependencies import require_roles
 from src.application.services.treasury_service import TreasuryService
 from src.api.routes.ledger import build_hash_service, build_uow_factory
 from src.application.services.ledger_posting_service import LedgerPostingService
-from src.domain.models.accounting import FinancialDocument, TreasuryMovement
+from src.domain.models.accounting import FinancialDocument, TreasuryAccount, TreasuryMovement
 from src.infrastructure.db.session import AsyncSessionLocal
 from src.infrastructure.unit_of_work import UnitOfWork
 
@@ -326,3 +328,271 @@ async def auto_match_statement(payload: TreasuryAutoMatchRequest, ctx=Depends(re
     service = TreasuryService(lambda tenant_id: UnitOfWork(AsyncSessionLocal, tenant_id))
     result = await service.auto_match_open_items(payload.tenant_id, limit=payload.limit)
     return {"reviewed": result.reviewed, "matched": result.matched}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# TREASURY ACCOUNTS — CRUD
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TreasuryAccountCreateRequest(BaseModel):
+    bank_code: str
+    account_number: str
+    currency: str = "PEN"
+    ledger_account_code: str
+
+
+@router.get("/treasury/accounts")
+async def list_treasury_accounts(ctx=Depends(require_roles("ADMIN", "CONTROLLER", "ACCOUNTANT", "TREASURY"))):
+    """Lista cuentas bancarias y caja chica activas del tenant."""
+    async with UnitOfWork(AsyncSessionLocal, ctx["tenant_id"]) as uow:
+        result = await uow.session.execute(
+            select(TreasuryAccount)
+            .where(TreasuryAccount.tenant_id == ctx["tenant_id"], TreasuryAccount.is_active.is_(True))
+            .order_by(TreasuryAccount.bank_code.asc())
+        )
+        rows = list(result.scalars().all())
+        return [
+            {
+                "id": str(row.id),
+                "bank_code": row.bank_code,
+                "account_number": row.account_number,
+                "currency": row.currency,
+                "ledger_account_code": row.ledger_account_code,
+                "current_balance": str(row.current_balance),
+                "created_at": row.created_at.isoformat(),
+            }
+            for row in rows
+        ]
+
+
+@router.post("/treasury/accounts")
+async def create_treasury_account(
+    payload: TreasuryAccountCreateRequest,
+    ctx=Depends(require_roles("ADMIN", "CONTROLLER", "ACCOUNTANT")),
+):
+    """Crea una cuenta bancaria o de caja chica para el tenant."""
+    async with UnitOfWork(AsyncSessionLocal, ctx["tenant_id"]) as uow:
+        account = TreasuryAccount(
+            id=uuid4(),
+            tenant_id=ctx["tenant_id"],
+            bank_code=payload.bank_code,
+            account_number=payload.account_number,
+            currency=payload.currency,
+            ledger_account_code=payload.ledger_account_code,
+            current_balance=Decimal("0"),
+            is_active=True,
+        )
+        uow.session.add(account)
+        await uow.commit()
+        return {
+            "id": str(account.id),
+            "bank_code": account.bank_code,
+            "account_number": account.account_number,
+            "currency": account.currency,
+            "current_balance": "0",
+        }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# TREASURY MOVEMENTS — lista y registro manual
+# ──────────────────────────────────────────────────────────────────────────────
+
+class ManualMovementRequest(BaseModel):
+    treasury_account_id: str
+    movement_date: str          # ISO date YYYY-MM-DD
+    movement_type: str          # INCOME | EXPENSE | RECEIPT | PAYMENT | TRANSFER_IN | TRANSFER_OUT | PETTY_CASH
+    amount: Decimal
+    currency: str = "PEN"
+    reference: str | None = None
+    partner_ruc: str | None = None
+
+
+@router.get("/treasury/movements")
+async def list_treasury_movements(
+    account_id: str | None = None,
+    limit: int = 100,
+    ctx=Depends(require_roles("ADMIN", "CONTROLLER", "ACCOUNTANT", "TREASURY")),
+):
+    """
+    Lista movimientos de tesorería.
+    Cruce rápido con business_partners para mostrar nombre del proveedor/cliente.
+    Cruce con financial_documents para mostrar documento origen.
+    """
+    async with UnitOfWork(AsyncSessionLocal, ctx["tenant_id"]) as uow:
+        q = select(TreasuryMovement).where(TreasuryMovement.tenant_id == ctx["tenant_id"])
+        if account_id:
+            q = q.where(TreasuryMovement.treasury_account_id == account_id)
+        q = q.order_by(TreasuryMovement.movement_date.desc()).limit(limit)
+        result = await uow.session.execute(q)
+        rows = list(result.scalars().all())
+
+        # Batch-load partner names
+        partner_ids = list({str(r.partner_id) for r in rows if r.partner_id})
+        partners: dict[str, str] = {}
+        if partner_ids:
+            pr = await uow.session.execute(
+                text(
+                    "SELECT id::text, legal_name FROM business_partners "
+                    "WHERE tenant_id = :tid AND id::text = ANY(:ids)"
+                ),
+                {"tid": ctx["tenant_id"], "ids": partner_ids},
+            )
+            partners = {row[0]: row[1] for row in pr.fetchall()}
+
+        # Batch-load document references (series-number)
+        doc_ids = list({str(r.financial_document_id) for r in rows if r.financial_document_id})
+        docs: dict[str, str] = {}
+        if doc_ids:
+            dr = await uow.session.execute(
+                text(
+                    "SELECT id::text, series || '-' || number AS ref "
+                    "FROM financial_documents "
+                    "WHERE tenant_id = :tid AND id::text = ANY(:ids)"
+                ),
+                {"tid": ctx["tenant_id"], "ids": doc_ids},
+            )
+            docs = {row[0]: row[1] for row in dr.fetchall()}
+
+        return [
+            {
+                "id": str(row.id),
+                "treasury_account_id": str(row.treasury_account_id),
+                "movement_date": str(row.movement_date),
+                "movement_type": row.movement_type,
+                "amount": str(row.amount),
+                "currency": row.currency,
+                "reference": row.reference,
+                "partner_name": partners.get(str(row.partner_id)) if row.partner_id else None,
+                "document_ref": docs.get(str(row.financial_document_id)) if row.financial_document_id else None,
+                "journal_entry_id": str(row.journal_entry_id) if row.journal_entry_id else None,
+                "reconciliation_status": row.reconciliation_status,
+                "created_at": row.created_at.isoformat(),
+            }
+            for row in rows
+        ]
+
+
+@router.post("/treasury/movements")
+async def register_manual_movement(
+    payload: ManualMovementRequest,
+    ctx=Depends(require_roles("ADMIN", "CONTROLLER", "ACCOUNTANT", "TREASURY")),
+):
+    """
+    Registra un movimiento manual de tesorería.
+    Actualiza el saldo de la cuenta automáticamente.
+    Cruza con business_partners por RUC si se proporciona.
+    """
+    async with UnitOfWork(AsyncSessionLocal, ctx["tenant_id"]) as uow:
+        acc_res = await uow.session.execute(
+            select(TreasuryAccount).where(
+                TreasuryAccount.id == payload.treasury_account_id,
+                TreasuryAccount.tenant_id == ctx["tenant_id"],
+            )
+        )
+        account = acc_res.scalar_one_or_none()
+        if account is None:
+            raise HTTPException(status_code=404, detail="Cuenta de tesorería no encontrada")
+
+        partner_id = None
+        if payload.partner_ruc:
+            p_res = await uow.session.execute(
+                text(
+                    "SELECT id FROM business_partners "
+                    "WHERE tenant_id = :tid AND document_number = :ruc LIMIT 1"
+                ),
+                {"tid": ctx["tenant_id"], "ruc": payload.partner_ruc},
+            )
+            p_row = p_res.fetchone()
+            if p_row:
+                partner_id = p_row[0]
+
+        movement = TreasuryMovement(
+            id=uuid4(),
+            tenant_id=ctx["tenant_id"],
+            treasury_account_id=payload.treasury_account_id,
+            movement_date=date_type.fromisoformat(payload.movement_date),
+            movement_type=payload.movement_type,
+            amount=payload.amount,
+            currency=payload.currency,
+            reference=payload.reference,
+            partner_id=partner_id,
+            reconciliation_status="OPEN",
+        )
+        uow.session.add(movement)
+
+        # Actualizar saldo de la cuenta
+        bal = Decimal(str(account.current_balance))
+        if payload.movement_type in ("INCOME", "RECEIPT", "TRANSFER_IN"):
+            account.current_balance = bal + payload.amount
+        elif payload.movement_type in ("EXPENSE", "PAYMENT", "TRANSFER_OUT", "PETTY_CASH"):
+            account.current_balance = bal - payload.amount
+
+        await uow.commit()
+        return {
+            "id": str(movement.id),
+            "movement_type": movement.movement_type,
+            "amount": str(movement.amount),
+            "reconciliation_status": "OPEN",
+            "new_balance": str(account.current_balance),
+        }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# TREASURY SUMMARY — cruce rápido con todas las tablas relacionadas
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.get("/treasury/summary")
+async def treasury_summary(ctx=Depends(require_roles("ADMIN", "CONTROLLER", "ACCOUNTANT", "TREASURY"))):
+    """
+    Resumen ejecutivo de tesorería:
+    - Saldo total por moneda (treasury_accounts)
+    - Movimientos abiertos sin conciliar (treasury_movements)
+    - Cuentas por cobrar pendientes - AR (financial_documents)
+    - Cuentas por pagar pendientes - AP (financial_documents)
+    """
+    tid = ctx["tenant_id"]
+    async with UnitOfWork(AsyncSessionLocal, tid) as uow:
+        bal = await uow.session.execute(
+            text("""
+                SELECT currency, SUM(current_balance) AS total, COUNT(*) AS qty
+                FROM treasury_accounts
+                WHERE tenant_id = :tid AND is_active = true
+                GROUP BY currency ORDER BY currency
+            """),
+            {"tid": tid},
+        )
+        balances = [{"currency": r[0], "total": str(r[1]), "accounts": r[2]} for r in bal.fetchall()]
+
+        open_mv = await uow.session.execute(
+            text("SELECT COUNT(*) FROM treasury_movements WHERE tenant_id = :tid AND reconciliation_status = 'OPEN'"),
+            {"tid": tid},
+        )
+
+        ar = await uow.session.execute(
+            text("""
+                SELECT COUNT(*), COALESCE(SUM(balance_amount), 0)
+                FROM financial_documents
+                WHERE tenant_id = :tid AND direction = 'AR' AND balance_amount > 0
+            """),
+            {"tid": tid},
+        )
+        ar_row = ar.fetchone()
+
+        ap = await uow.session.execute(
+            text("""
+                SELECT COUNT(*), COALESCE(SUM(balance_amount), 0)
+                FROM financial_documents
+                WHERE tenant_id = :tid AND direction = 'AP' AND balance_amount > 0
+            """),
+            {"tid": tid},
+        )
+        ap_row = ap.fetchone()
+
+        return {
+            "balances": balances,
+            "open_movements": open_mv.scalar() or 0,
+            "ar_pending_count": ar_row[0] if ar_row else 0,
+            "ar_pending_amount": str(ar_row[1]) if ar_row else "0",
+            "ap_pending_count": ap_row[0] if ap_row else 0,
+            "ap_pending_amount": str(ap_row[1]) if ap_row else "0",
+        }

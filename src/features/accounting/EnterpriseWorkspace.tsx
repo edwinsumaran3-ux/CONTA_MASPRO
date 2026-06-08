@@ -40,7 +40,7 @@ const SunatPortalHub         = lazy(() => import('../sunat/SunatPortalHub').then
 const AuditHealthDashboard   = lazy(() => import('../audit/AuditHealthDashboard').then(m => ({ default: m.AuditHealthDashboard })));
 const ComprasEnhanced        = lazy(() => import('./ComprasEnhanced').then(m => ({ default: m.ComprasEnhanced })));
 const PayrollGrid            = lazy(() => import('../payroll/PayrollGrid').then(m => ({ default: m.PayrollGrid })));
-const AssetRegister          = lazy(() => import('../assets/AssetRegister').then(m => ({ default: m.AssetRegister })));
+const TreasuryPanel          = lazy(() => import('../treasury/TreasuryPanel').then(m => ({ default: m.TreasuryPanel })));
 const FinancialDashboard     = lazy(() => import('../reports/FinancialDashboard').then(m => ({ default: m.FinancialDashboard })));
 const BooksCenter            = lazy(() => import('../reports/BooksCenter').then(m => ({ default: m.BooksCenter })));
 const OwnerDashboard         = lazy(() => import('../client-portal/OwnerDashboard').then(m => ({ default: m.OwnerDashboard })));
@@ -1401,7 +1401,7 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
       return <ArchitectureExplorer />;
     }
     if (selectedView === 'tesoreria') {
-      return <AssetRegister />;
+      return <TreasuryPanel token={token || ''} apiBase={API_BASE} tenantId={getTenantId()} />;
     }
     if (selectedView === 'cxcxp') {
       return <FinancialDashboard />;
