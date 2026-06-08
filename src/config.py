@@ -11,12 +11,13 @@ class Settings(BaseSettings):
     @field_validator("database_url", mode="before")
     @classmethod
     def _fix_db_scheme(cls, v: str) -> str:
-        # Railway y otros proveedores usan postgresql:// o postgres://; asyncpg requiere postgresql+asyncpg://
-        if isinstance(v, str):
-            if v.startswith("postgres://"):
-                v = "postgresql+asyncpg://" + v[len("postgres://"):]
-            elif v.startswith("postgresql://"):
-                v = "postgresql+asyncpg://" + v[len("postgresql://"):]
+        if not isinstance(v, str):
+            return v
+        v = v.strip()
+        if v.startswith("postgres://"):
+            return "postgresql+asyncpg://" + v[len("postgres://"):]
+        if v.startswith("postgresql://"):
+            return "postgresql+asyncpg://" + v[len("postgresql://"):]
         return v
     redis_url: str = "redis://localhost:6379/0"
     ledger_hmac_secret: str = "change-this-secret-min-32-chars"
