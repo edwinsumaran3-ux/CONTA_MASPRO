@@ -756,13 +756,16 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
 
   const loadChartAccounts = async (bearerToken: string) => {
     try {
-      const h = authHeaders(bearerToken, getTenantId());
+      const h = authHeaders(bearerToken); // usa tokenTenantId(bearerToken) del JWT
       const res = await fetch(`${API_BASE}/master/chart-accounts`, { headers: h });
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data) && data.length === 0) {
-          // New tenant — auto-seed PCGE and reload
-          await fetch(`${API_BASE}/master/chart-accounts/seed-pcge`, { method: 'POST', headers: h });
+          // New tenant — auto-seed PCGE (pass company info to satisfy tenants FK)
+          await fetch(`${API_BASE}/master/chart-accounts/seed-pcge`, {
+            method: 'POST', headers: h,
+            body: JSON.stringify({ ruc: currentCompany.ruc, legal_name: currentCompany.businessName }),
+          });
           const res2 = await fetch(`${API_BASE}/master/chart-accounts`, { headers: h });
           if (res2.ok) {
             const data2 = await res2.json();

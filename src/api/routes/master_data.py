@@ -87,12 +87,34 @@ async def list_chart_accounts(limit: int = 500, ctx=Depends(require_roles("ADMIN
         ]
 
 
+class SeedPcgeRequest(BaseModel):
+    ruc: str = ""
+    legal_name: str = "Mi Empresa"
+
+
 @router.post("/chart-accounts/seed-pcge")
-async def seed_pcge_accounts(ctx=Depends(require_roles("ADMIN", "CONTROLLER", "ACCOUNTANT"))):
+async def seed_pcge_accounts(payload: SeedPcgeRequest = SeedPcgeRequest(), ctx=Depends(require_roles("ADMIN", "CONTROLLER", "ACCOUNTANT"))):
     """Seed the standard Peruvian PCGE chart of accounts for this tenant.
+    Creates the tenant row if it doesn't exist (satisfies FK).
     Idempotent: if any accounts already exist, returns them without re-inserting.
     """
     tenant_id = ctx["tenant_id"]
+    ruc = (payload.ruc or "").strip()[:11] or tenant_id.replace("-", "")[:11]
+    legal_name = (payload.legal_name or "Mi Empresa").strip()
+
+    async with UnitOfWork(AsyncSessionLocal, tenant_id) as uow:
+        # Ensure tenant row exists (FK on chart_accounts requires it)
+        await uow.session.execute(
+            text("""
+                INSERT INTO tenants (id, legal_name, ruc, status)
+                VALUES (:id, :legal_name, :ruc, 'ACTIVE')
+                ON CONFLICT (id) DO UPDATE SET
+                    legal_name = EXCLUDED.legal_name,
+                    ruc        = COALESCE(NULLIF(tenants.ruc,''), EXCLUDED.ruc)
+            """),
+            {"id": tenant_id, "legal_name": legal_name, "ruc": ruc},
+        )
+        await uow.commit()
 
     async with UnitOfWork(AsyncSessionLocal, tenant_id) as uow:
         existing_count = await uow.session.scalar(
