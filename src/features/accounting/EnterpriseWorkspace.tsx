@@ -19,6 +19,7 @@ import {
   Search24Regular,
   ShieldCheckmark24Regular,
   SlideSettings24Regular,
+  Sparkle24Regular,
   Wallet24Regular,
 } from '@fluentui/react-icons';
 import { SidePanel } from '../../components/ui/SidePanel';
@@ -45,6 +46,7 @@ const BooksCenter            = lazy(() => import('../reports/BooksCenter').then(
 const OwnerDashboard         = lazy(() => import('../client-portal/OwnerDashboard').then(m => ({ default: m.OwnerDashboard })));
 const WarehouseCommandCenter = lazy(() => import('../inventory/WarehouseCommandCenter'));
 const ApexLogixCore          = lazy(() => import('../inventory/EnterpriseFulfillmentCommandCenter'));
+const ArchitectureExplorer   = lazy(() => import('../../components/ArchitectureExplorer').then(m => ({ default: m.ArchitectureExplorer })));
 
 import { PeriodCloseAction } from './PeriodCloseAction';
 import { useTenantStore, type Company } from '../../hooks/useTenantStore';
@@ -250,6 +252,7 @@ const railItems = [
   { id: 'integraciones',  label: 'Integraciones',    icon: Database24Regular,       feature: 'integrations' },
   { id: 'owner',          label: 'Owner Portal',     icon: Database24Regular,       feature: 'superAdmin' },
   { id: 'config',         label: 'Configuracion',    icon: SlideSettings24Regular,  feature: null },
+  { id: 'dev_center',    label: 'Dev Center',       icon: Sparkle24Regular,        feature: 'superAdmin' },
 ];
 
 const toNumber = (value: string | number | undefined | null) => {
@@ -354,6 +357,7 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
   const [chartAccounts, setChartAccounts] = useState<ChartAccountItem[]>([]);
   const bootstrapRanRef = useRef(false);
   const welcomeAudioRef = useRef(false);
+  const lastRefreshRef = useRef(0);
 
   // ─── Bienvenida por voz al entrar al sistema ────────────────────────────────
   useEffect(() => {
@@ -722,7 +726,8 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
       body: JSON.stringify({ tenant_id: getTenantId(), user_id: USER_ID, role: userRole, plan: userPlan }),
     });
     if (!response.ok) {
-      throw new Error('No se pudo generar token dev');
+      const errorMsg = await parseBackendError(response);
+      throw new Error(errorMsg || 'No se pudo generar token dev');
     }
     const data = await response.json();
     const accessToken = data.access_token as string;
@@ -916,6 +921,11 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
   // IMPORTANTE: funciona incluso cuando token está vacío (bootstrap falló por backend apagado)
   useEffect(() => {
     const refresh = async () => {
+      const now = Date.now();
+      // Throttle: Evita saturar el backend si el usuario cambia de pestaña rápidamente (cooldown 15s)
+      if (now - lastRefreshRef.current < 15000) return;
+      lastRefreshRef.current = now;
+
       try {
         // Si no hay token (bootstrap falló por backend apagado), re-inicializar completo
         if (!token) {
@@ -932,7 +942,9 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
         }
         const currentToken = await getValidToken(token);
         if (currentToken) await loadJournal(currentToken, selectedYear);
-      } catch { /* no bloquea la UI */ }
+      } catch (err) {
+        console.warn('CONTA_PRO Background refresh failed (Server down?):', err);
+      }
     };
 
     // Polling cada 60 segundos
@@ -1372,6 +1384,9 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
     }
     if (selectedView === 'config') {
       return <ApiConfigPanel />;
+    }
+    if (selectedView === 'dev_center') {
+      return <ArchitectureExplorer />;
     }
     if (selectedView === 'tesoreria') {
       return <AssetRegister />;
