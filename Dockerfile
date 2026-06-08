@@ -26,5 +26,4 @@ COPY . .
 EXPOSE 8000
 
 # Correr migraciones y luego levantar el servidor
-RUN chmod +x start.sh
-CMD ["sh", "start.sh"]
+CMD ["python", "start.py"]
