@@ -666,7 +666,7 @@ export default function ApexLogixCore({
     };
     try {
       const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,
         { method:"POST", headers:{"Content-Type":"application/json"},
           body: JSON.stringify({ contents:[{ parts:[
             { text: MASTER_PROMPT + "\n\nContexto actual:\n" + JSON.stringify(context,null,2) + "\n\nPregunta del operador: " + aiQuestion }
@@ -2404,8 +2404,8 @@ export default function ApexLogixCore({
             <div className="form-field">
               <label className="form-label">Modelo</label>
               <select>
-                <option>gemini-1.5-flash</option>
-                <option>gemini-1.5-pro</option>
+                <option>gemini-2.5-flash</option>
+                <option>gemini-2.5-pro</option>
               </select>
             </div>
           </div>
