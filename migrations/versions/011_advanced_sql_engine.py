@@ -9,6 +9,7 @@ Implements SQL Foundation (Fase 1) of the Architecture Explorer roadmap:
   - Composite indexes for reporting queries
 """
 from alembic import op
+from sqlalchemy import text
 
 revision = "011_advanced_sql_engine"
 down_revision = "010_ledger_reinforced_schema"
@@ -18,7 +19,7 @@ depends_on = None
 
 def upgrade():
     # ── 1. Materialized view: Trial Balance ──────────────────────────────────
-    op.execute("""
+    op.execute(text("""
         CREATE MATERIALIZED VIEW IF NOT EXISTS mv_trial_balance AS
         SELECT
             je.tenant_id,
@@ -43,18 +44,18 @@ def upgrade():
                  EXTRACT(YEAR  FROM je.entry_date),
                  EXTRACT(MONTH FROM je.entry_date)
         WITH NO DATA;
-    """)
+    """))
 
-    op.execute("""
+    op.execute(text("""
         CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_trial_balance_pk
             ON mv_trial_balance (tenant_id, account_code, year, month);
-    """)
+    """))
 
     # Populate on first deploy (non-concurrent since index was just created)
-    op.execute("REFRESH MATERIALIZED VIEW mv_trial_balance;")
+    op.execute(text("REFRESH MATERIALIZED VIEW mv_trial_balance;"))
 
     # ── 2. Materialized view: Period Summary (dashboard metrics) ─────────────
-    op.execute("""
+    op.execute(text("""
         CREATE MATERIALIZED VIEW IF NOT EXISTS mv_period_summary AS
         SELECT
             je.tenant_id,
@@ -79,17 +80,17 @@ def upgrade():
                  EXTRACT(YEAR  FROM je.entry_date),
                  EXTRACT(MONTH FROM je.entry_date)
         WITH NO DATA;
-    """)
+    """))
 
-    op.execute("""
+    op.execute(text("""
         CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_period_summary_pk
             ON mv_period_summary (tenant_id, year, month);
-    """)
+    """))
 
-    op.execute("REFRESH MATERIALIZED VIEW mv_period_summary;")
+    op.execute(text("REFRESH MATERIALIZED VIEW mv_period_summary;"))
 
     # ── 3. SQL helper: compute_row_hash (mirrors Python HashChain) ───────────
-    op.execute("""
+    op.execute(text("""
         CREATE OR REPLACE FUNCTION compute_row_hash(
             p_previous_hash TEXT,
             p_entry_data    TEXT
@@ -107,12 +108,12 @@ def upgrade():
                 'hex'
             );
         $$;
-    """)
+    """))
 
     # ── 4. CPP recalculation function ────────────────────────────────────────
     # Recalculates Costo Promedio Ponderado for all kardex movements of a product.
     # Called after each ingreso or purchase to keep unit_cost consistent.
-    op.execute("""
+    op.execute(text("""
         CREATE OR REPLACE FUNCTION recalculate_cpp(
             p_tenant_id  UUID,
             p_product_id UUID
@@ -158,10 +159,10 @@ def upgrade():
             END LOOP;
         END;
         $$;
-    """)
+    """))
 
     # ── 5. Period-close validation trigger ──────────────────────────────────
-    op.execute("""
+    op.execute(text("""
         CREATE OR REPLACE FUNCTION trg_validate_period_close_fn()
         RETURNS TRIGGER
         LANGUAGE plpgsql
@@ -229,51 +230,51 @@ def upgrade():
             RETURN NEW;
         END;
         $$;
-    """)
+    """))
 
-    op.execute("""
-        DROP TRIGGER IF EXISTS trg_period_close_validate ON accounting_periods;
+    op.execute(text("DROP TRIGGER IF EXISTS trg_period_close_validate ON accounting_periods"))
+    op.execute(text("""
         CREATE TRIGGER trg_period_close_validate
             BEFORE UPDATE ON accounting_periods
             FOR EACH ROW
-            EXECUTE FUNCTION trg_validate_period_close_fn();
-    """)
+            EXECUTE FUNCTION trg_validate_period_close_fn()
+    """))
 
     # ── 6. Composite indexes for reporting queries ───────────────────────────
-    op.execute("""
+    op.execute(text("""
         CREATE INDEX IF NOT EXISTS idx_je_tenant_period_status
             ON journal_entries (tenant_id, entry_date, estado_asiento);
-    """)
-    op.execute("""
+    """))
+    op.execute(text("""
         CREATE INDEX IF NOT EXISTS idx_je_tenant_validar
             ON journal_entries (tenant_id, validar_status)
             WHERE validar_status != 'OK';
-    """)
-    op.execute("""
+    """))
+    op.execute(text("""
         CREATE INDEX IF NOT EXISTS idx_jl_account_entry
             ON journal_lines (account_code, entry_id);
-    """)
-    op.execute("""
+    """))
+    op.execute(text("""
         CREATE INDEX IF NOT EXISTS idx_jl_cost_center_null
             ON journal_lines (entry_id)
             WHERE COALESCE(TRIM(cost_center), '') = ''
               AND LEFT(account_code, 1) IN ('6', '9');
-    """)
+    """))
 
 
 def downgrade():
     # Triggers & functions
-    op.execute("DROP TRIGGER IF EXISTS trg_period_close_validate ON accounting_periods;")
-    op.execute("DROP FUNCTION IF EXISTS trg_validate_period_close_fn();")
-    op.execute("DROP FUNCTION IF EXISTS recalculate_cpp(UUID, UUID);")
-    op.execute("DROP FUNCTION IF EXISTS compute_row_hash(TEXT, TEXT);")
+    op.execute(text("DROP TRIGGER IF EXISTS trg_period_close_validate ON accounting_periods;"))
+    op.execute(text("DROP FUNCTION IF EXISTS trg_validate_period_close_fn();"))
+    op.execute(text("DROP FUNCTION IF EXISTS recalculate_cpp(UUID, UUID);"))
+    op.execute(text("DROP FUNCTION IF EXISTS compute_row_hash(TEXT, TEXT);"))
 
     # Materialized views
-    op.execute("DROP MATERIALIZED VIEW IF EXISTS mv_period_summary;")
-    op.execute("DROP MATERIALIZED VIEW IF EXISTS mv_trial_balance;")
+    op.execute(text("DROP MATERIALIZED VIEW IF EXISTS mv_period_summary;"))
+    op.execute(text("DROP MATERIALIZED VIEW IF EXISTS mv_trial_balance;"))
 
     # Indexes (dropped automatically with their tables/views but listed for clarity)
-    op.execute("DROP INDEX IF EXISTS idx_jl_cost_center_null;")
-    op.execute("DROP INDEX IF EXISTS idx_jl_account_entry;")
-    op.execute("DROP INDEX IF EXISTS idx_je_tenant_validar;")
-    op.execute("DROP INDEX IF EXISTS idx_je_tenant_period_status;")
+    op.execute(text("DROP INDEX IF EXISTS idx_jl_cost_center_null;"))
+    op.execute(text("DROP INDEX IF EXISTS idx_jl_account_entry;"))
+    op.execute(text("DROP INDEX IF EXISTS idx_je_tenant_validar;"))
+    op.execute(text("DROP INDEX IF EXISTS idx_je_tenant_period_status;"))

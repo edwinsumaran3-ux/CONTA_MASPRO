@@ -6,13 +6,22 @@ down_revision = None
 branch_labels = None
 depends_on = None
 
+
+def _run_sql_file(path: str) -> None:
+    sql = open(path, encoding="utf-8").read()
+    for stmt in sql.split(";"):
+        stmt = stmt.strip()
+        if stmt:
+            op.execute(text(stmt))
+
+
 def upgrade():
-    op.execute(open("sql/001_enterprise_core.sql", encoding="utf-8").read())
+    _run_sql_file("sql/001_enterprise_core.sql")
     bind = op.get_bind()
     has_vector = bind.execute(text("SELECT 1 FROM pg_available_extensions WHERE name = 'vector' LIMIT 1")).scalar()
     if has_vector:
-        op.execute('CREATE EXTENSION IF NOT EXISTS vector')
-        op.execute('ALTER TABLE accounting_embeddings ADD COLUMN IF NOT EXISTS embedding vector(768)')
+        op.execute(text('CREATE EXTENSION IF NOT EXISTS vector'))
+        op.execute(text('ALTER TABLE accounting_embeddings ADD COLUMN IF NOT EXISTS embedding vector(768)'))
 
 def downgrade():
     op.execute("DROP TABLE IF EXISTS accounting_embeddings CASCADE")

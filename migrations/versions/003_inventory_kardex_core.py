@@ -1,4 +1,5 @@
 from alembic import op
+from sqlalchemy import text
 
 revision = "003_inventory_kardex_core"
 down_revision = "002_enterprise_expansion"
@@ -6,8 +7,16 @@ branch_labels = None
 depends_on = None
 
 
+def _run_sql_file(path: str) -> None:
+    sql = open(path, encoding="utf-8").read()
+    for stmt in sql.split(";"):
+        stmt = stmt.strip()
+        if stmt:
+            op.execute(text(stmt))
+
+
 def upgrade():
-    op.execute(open("sql/004_inventory_kardex_core.sql", encoding="utf-8").read())
+    _run_sql_file("sql/004_inventory_kardex_core.sql")
 
 
 def downgrade():
