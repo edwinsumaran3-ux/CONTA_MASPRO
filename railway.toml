@@ -11,3 +11,6 @@ restartPolicyMaxRetries = 3
 
 [[services]]
 name = "contapro-api"
+
+[variables]
+DATABASE_URL = "${{Postgres-Pem8.DATABASE_URL}}"
