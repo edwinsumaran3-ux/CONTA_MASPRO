@@ -66,7 +66,7 @@ def require_roles(*allowed_roles: str):
     """
     async def checker(ctx: dict = Depends(get_current_context)) -> dict:
         role = ctx.get("role")
-        if allowed_roles and role not in allowed_roles:
+        if allowed_roles and role != "SUPER_ADMIN" and role not in allowed_roles:
             raise HTTPException(status_code=403, detail="Insufficient role")
         return ctx
     return checker
