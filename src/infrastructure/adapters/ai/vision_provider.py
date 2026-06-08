@@ -24,7 +24,7 @@ def get_vision_client() -> ClaudeClient | GeminiClient:
         )
     return GeminiClient(
         api_key=settings.gemini_api_key,
-        model=settings.gemini_model or "gemini-2.5-flash",
+        model=settings.gemini_model or "gemini-3.5-flash",
     )
 
 
