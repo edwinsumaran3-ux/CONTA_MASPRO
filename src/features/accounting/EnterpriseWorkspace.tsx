@@ -713,7 +713,7 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
     });
   }, [rows, entriesIndex]);
 
-  const authHeaders = (bearerToken: string, tenantId = getTenantId()) => ({
+  const authHeaders = (bearerToken: string, tenantId = tokenTenantId(bearerToken) || getTenantId()) => ({
     Authorization: `Bearer ${bearerToken}`,
     'X-Tenant-Id': tenantId,
     'Content-Type': 'application/json',
