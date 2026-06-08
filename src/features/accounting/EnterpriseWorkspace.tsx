@@ -950,7 +950,11 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
           return;
         }
         const currentToken = await getValidToken(token);
-        if (currentToken) await loadJournal(currentToken, selectedYear);
+        if (currentToken) {
+          await loadJournal(currentToken, selectedYear);
+          // Solo recarga cuentas si aún están vacías (e.g. seed-pcge pendiente)
+          if (chartAccounts.length === 0) await loadChartAccounts(currentToken);
+        }
       } catch (err) {
         console.warn('CONTA_PRO Background refresh failed (Server down?):', err);
       }
