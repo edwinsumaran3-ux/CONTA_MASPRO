@@ -681,30 +681,3 @@ async def clear_all_treasury_data(ctx=Depends(require_roles("ADMIN", "CONTROLLER
             "movements_deleted": len(mv_res.fetchall()),
             "accounts_deleted": len(acc_res.fetchall()),
         }
-
-
-@router.delete("/journal/clear-test-data")
-async def clear_test_journal_data(ctx=Depends(require_roles("ADMIN"))):
-    """Elimina asientos de prueba del diario deshabilitando triggers de inmutabilidad."""
-    tid = ctx["tenant_id"]
-    sqls = [
-        "ALTER TABLE journal_lines DISABLE TRIGGER trg_no_delete_journal_lines",
-        "ALTER TABLE journal_entries DISABLE TRIGGER trg_no_delete_journal_entries",
-        "DELETE FROM journal_lines WHERE entry_id IN ("
-        "  '07b08883-de73-46f4-baca-bd8f8f5a1804',"
-        "  'cff00382-98c7-4da4-89e1-b94d1767037a',"
-        "  'ad1809cf-4724-462a-876b-95fe3fc92419'"
-        ")",
-        "DELETE FROM journal_entries WHERE id IN ("
-        "  '07b08883-de73-46f4-baca-bd8f8f5a1804',"
-        "  'cff00382-98c7-4da4-89e1-b94d1767037a',"
-        "  'ad1809cf-4724-462a-876b-95fe3fc92419'"
-        ")",
-        "ALTER TABLE journal_lines ENABLE TRIGGER trg_no_delete_journal_lines",
-        "ALTER TABLE journal_entries ENABLE TRIGGER trg_no_delete_journal_entries",
-    ]
-    async with UnitOfWork(AsyncSessionLocal, tid) as uow:
-        for sql in sqls:
-            await uow.session.execute(text(sql))
-        await uow.commit()
-    return {"status": "ok", "message": "Asientos de prueba eliminados"}
