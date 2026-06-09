@@ -270,17 +270,26 @@ class LedgerPostingService:
         cost_center: str | None,
     ) -> list[dict]:
         """
-        Aplica reglas PCGE Peru a las líneas del asiento:
-        1. Cuentas de inventario (2xx/3xx) en DEBE → agrega línea 60x DEBE + 61x HABER.
-           Activos fijos (33x+) → debit directo sin pasar por 60x.
-        2. Líneas HABER en 4212 → reemplaza por cuenta de pago real (contado/crédito).
-        No modifica si las líneas ya tienen cuentas 60x o 61x (ya es PCGE-correcto).
+        Aplica reglas PCGE Peru al asiento de COMPRA (documento = factura):
+
+        Regla 1 — Cuenta de inventario/activo (2xx/3xx) en DEBE:
+          Reemplaza por la cuenta 60x correspondiente.
+          El movimiento de inventario (2xx ↔ 61x) es un asiento separado
+          del módulo de inventario; NO se incluye aquí para no duplicar el
+          total del documento (la factura es por S/ X, no por S/ 2X).
+          Excepción: activos fijos (33x+) → debit directo, sin 60x.
+
+        Regla 2 — HABER en C×P (4212 y variantes):
+          Reemplaza por la cuenta de pago real según tipo detectado:
+          CONTADO → 1041 (banco) / 1011 (caja)
+          CREDITO → 4212
+
+        No modifica líneas que ya tienen 60x/61x (ya son PCGE-correctas).
         """
-        # Si ya tiene cuenta 60x en DEBE → no agregar (evita duplicar)
+        # Si ya tiene cuenta 60x en DEBE → ya es PCGE-correcto, no modificar
         has_purchase_line = any(
-            self._normalize_code(str(l.get("account_code", "")), "0")[:2] in (
-                "60", "61"
-            ) and self._as_decimal(l.get("debit", "0")) > 0
+            self._normalize_code(str(l.get("account_code", "")), "0")[:2] in ("60", "61")
+            and self._as_decimal(l.get("debit", "0")) > 0
             for l in lines
         )
 
@@ -302,41 +311,19 @@ class LedgerPostingService:
                 })
                 continue
 
-            # Regla 1: inventario en DEBE → insertar 60x + conservar 2xx + agregar 61x HABER
+            # Regla 1: cuenta inventario en DEBE → reemplazar por 60x correcto
+            # El movimiento físico de inventario (2xx/61x) va en asiento separado.
             if not has_purchase_line and debit > 0 and self._is_inventory_account(code):
                 if self._is_fixed_asset_account(code):
-                    # Activo fijo: debit directo (no pasa por Clase 6)
+                    # Activo fijo (33x+): debit directo, no pasa por Clase 6
                     result.append(line)
                     continue
 
                 purchase_code, purchase_name = self._get_purchase_account(code)
-                variation_code, variation_name = self._get_variation_account(code)
-
-                # Línea 60x DEBE (compra)
                 result.append({
+                    **line,
                     "account_code": purchase_code,
                     "account_name": purchase_name,
-                    "debit": debit,
-                    "credit": Decimal("0.00"),
-                    "partner_ruc": supplier_ruc,
-                    "document_type": doc_type,
-                    "document_series": serie,
-                    "document_number": number,
-                    "cost_center": cost_center,
-                })
-                # Línea 2xx DEBE (destino: inventario)
-                result.append(line)
-                # Línea 61x HABER (variación — cierra el 60x en P&L)
-                result.append({
-                    "account_code": variation_code,
-                    "account_name": variation_name,
-                    "debit": Decimal("0.00"),
-                    "credit": debit,
-                    "partner_ruc": None,
-                    "document_type": doc_type,
-                    "document_series": serie,
-                    "document_number": number,
-                    "cost_center": None,
                 })
                 continue
 
