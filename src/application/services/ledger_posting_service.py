@@ -164,6 +164,73 @@ class LedgerPostingService:
     def _requires_cost_center(self, code: str) -> bool:
         return self._normalize_code(code, "0")[:1] in {"6", "9"}
 
+    # Mapa PCGE: prefijo cuenta 60x/62x/63x/65x → centro de costo por defecto
+    # Basado en Plan Contable General Empresarial Peru y criterios tributarios SUNAT
+    _ACCOUNT_TO_COST_CENTER: dict[str, str] = {
+        # 60x — Compras (por naturaleza del bien adquirido)
+        "60":   "COMPRAS",
+        "601":  "COMPRAS",          # Mercaderías
+        "602":  "PRODUCCION",       # Materias primas
+        "603":  "ALMACEN",          # Materiales auxiliares / suministros / repuestos
+        "604":  "LOGISTICA",        # Envases y embalajes
+        "605":  "ADMINISTRACION",   # Materiales de construcción
+        "606":  "ADMINISTRACION",   # Suministros diversos
+        "609":  "COMPRAS",          # Costos vinculados a compras
+        # 62x — Gastos de personal
+        "621":  "PLANILLAS",        # Remuneraciones
+        "622":  "PLANILLAS",        # Otras remuneraciones
+        "623":  "PLANILLAS",        # Indemnizaciones
+        "627":  "PLANILLAS",        # Seg. social / EPS / ONP / AFP
+        "628":  "PLANILLAS",        # Compensación por tiempo de servicios
+        "629":  "PLANILLAS",        # Beneficios sociales
+        # 63x — Servicios prestados por terceros
+        "631":  "ADMINISTRACION",   # Transporte, correos y gastos de viaje
+        "632":  "ADMINISTRACION",   # Asesoría y consultoría
+        "633":  "ADMINISTRACION",   # Servicios de agua, energía, teléfono
+        "634":  "ADMINISTRACION",   # Publicidad, publicaciones, relaciones públicas
+        "635":  "ADMINISTRACION",   # Arrendamiento operativo
+        "636":  "ADMINISTRACION",   # Servicios contratados de mantenimiento
+        "637":  "ADMINISTRACION",   # Estudios de investigación
+        "638":  "ADMINISTRACION",   # Servicios de sistemas de información
+        "639":  "ADMINISTRACION",   # Otros servicios de terceros
+        # 65x — Otros gastos de gestión
+        "651":  "ADMINISTRACION",   # Seguros
+        "652":  "ADMINISTRACION",   # Regalías
+        "656":  "ADMINISTRACION",   # Suministros
+        "659":  "ADMINISTRACION",   # Otros gastos de gestión
+        # 67x — Gastos financieros
+        "671":  "FINANZAS",
+        "672":  "FINANZAS",
+        "673":  "FINANZAS",
+        "679":  "FINANZAS",
+        # 68x — Valuación / depreciación
+        "681":  "ACTIVOS",
+        "682":  "ACTIVOS",
+        "683":  "ACTIVOS",
+        "684":  "ACTIVOS",
+        # 69x — Costo de ventas
+        "691":  "VENTAS",
+        "692":  "VENTAS",
+        "693":  "VENTAS",
+        "694":  "VENTAS",
+        "695":  "VENTAS",
+    }
+
+    def _derive_cost_center(self, account_code: str, explicit_cc: str | None = None) -> str:
+        """
+        Devuelve el centro de costo a usar para la cuenta dada.
+        Prioridad: 1) explícito del documento, 2) mapeo PCGE por cuenta, 3) 'ADMINISTRACION'
+        """
+        if explicit_cc:
+            return explicit_cc
+        code = self._normalize_code(account_code, "0")
+        # Intentar con 3 dígitos, luego 2 dígitos
+        for length in (3, 2):
+            key = code[:length]
+            if key in self._ACCOUNT_TO_COST_CENTER:
+                return self._ACCOUNT_TO_COST_CENTER[key]
+        return "ADMINISTRACION"
+
     # ─── PCGE Peru: Pago, Inventario y Variación ─────────────────────────────
 
     # Mapa: prefijo cuenta inventario/activo → (cuenta compra 60x, nombre)
@@ -320,10 +387,13 @@ class LedgerPostingService:
                     continue
 
                 purchase_code, purchase_name = self._get_purchase_account(code)
+                # Clase 6 requiere centro de costo — derivar automáticamente por PCGE
+                cc = self._derive_cost_center(purchase_code, line.get("cost_center") or cost_center)
                 result.append({
                     **line,
                     "account_code": purchase_code,
                     "account_name": purchase_name,
+                    "cost_center": cc,
                 })
                 continue
 
@@ -620,7 +690,8 @@ class LedgerPostingService:
                 })
         else:
             raw_expense_code = self._normalize_code(purchase_data.get("expense_account", "659101"))
-            cost_center_val = purchase_data.get("cost_center")
+            # Centro de costo: derivar automáticamente por PCGE si no viene explícito
+            cost_center_val = self._derive_cost_center(raw_expense_code, purchase_data.get("cost_center"))
 
             # Línea principal: gasto/compra
             lines = [
@@ -683,7 +754,10 @@ class LedgerPostingService:
         if total_debit != total_credit:
             raise UnbalancedEntryException(f"Compra descuadrada: Debe {total_debit} != Haber {total_credit}")
 
-        # Centro de costo es opcional — no bloquear si no viene en la factura.
+        # Enforce cost center for expense/analytic accounts (clase 6 y 9).
+        for line in lines:
+            if self._requires_cost_center(line["account_code"]) and not line.get("cost_center"):
+                raise UnbalancedEntryException(f"La cuenta {line['account_code']} requiere centro de costo")
 
         account_upserts = list(purchase_data.get("accounts_to_upsert") or [])
         existing_codes = {str(item.get("account_code") or "") for item in account_upserts}
