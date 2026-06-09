@@ -491,14 +491,15 @@ async def delete_purchase_invoice(entry_id: UUID, ctx=Depends(get_current_contex
             await s.execute(text("ALTER TABLE journal_entries DISABLE TRIGGER trg_no_delete_journal_entries"))
 
             # Borrar en orden: documentos → líneas → asiento
+            # Nota: asyncpg no soporta ::uuid con params nombrados, usar CAST()
             await s.execute(text(
-                "DELETE FROM financial_documents WHERE journal_entry_id = :eid::uuid AND tenant_id = :tid::uuid"
+                "DELETE FROM financial_documents WHERE journal_entry_id = CAST(:eid AS uuid) AND tenant_id = CAST(:tid AS uuid)"
             ), {"eid": eid, "tid": tenant_id})
             await s.execute(text(
-                "DELETE FROM journal_lines WHERE entry_id = :eid::uuid"
+                "DELETE FROM journal_lines WHERE entry_id = CAST(:eid AS uuid)"
             ), {"eid": eid})
             await s.execute(text(
-                "DELETE FROM journal_entries WHERE id = :eid::uuid AND tenant_id = :tid::uuid"
+                "DELETE FROM journal_entries WHERE id = CAST(:eid AS uuid) AND tenant_id = CAST(:tid AS uuid)"
             ), {"eid": eid, "tid": tenant_id})
 
             # Re-habilitar triggers
