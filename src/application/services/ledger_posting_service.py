@@ -683,10 +683,7 @@ class LedgerPostingService:
         if total_debit != total_credit:
             raise UnbalancedEntryException(f"Compra descuadrada: Debe {total_debit} != Haber {total_credit}")
 
-        # Enforce cost center for expense/analytic accounts.
-        for line in lines:
-            if self._requires_cost_center(line["account_code"]) and not line.get("cost_center"):
-                raise UnbalancedEntryException(f"La cuenta {line['account_code']} requiere centro de costo")
+        # Centro de costo es opcional — no bloquear si no viene en la factura.
 
         account_upserts = list(purchase_data.get("accounts_to_upsert") or [])
         existing_codes = {str(item.get("account_code") or "") for item in account_upserts}
