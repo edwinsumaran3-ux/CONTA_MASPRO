@@ -1459,7 +1459,7 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
 
     if (selectedView === 'contabilidad') {
       return (
-        <div style={{ height: '100%', minHeight: 0, overflow: 'hidden' }}>
+        <div style={{ height: '100%', minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
           <AccountingLivePanel
             movements={accountingMovements}
             chartAccounts={chartAccounts}
