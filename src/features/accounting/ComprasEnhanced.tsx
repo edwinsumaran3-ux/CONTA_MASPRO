@@ -192,7 +192,7 @@ export const ComprasEnhanced = ({
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<Set<string>>(new Set());
   const [purgingAll, setPurgingAll] = useState(false);
-  const isAdmin = userRole?.toUpperCase() === 'ADMIN';
+  const isAdmin = ['ADMIN', 'SUPER_ADMIN', 'CONTA_PRO'].includes(userRole?.toUpperCase() ?? '');
 
   const allDocs = externalDocs ?? [];
   const docs = search.trim()
