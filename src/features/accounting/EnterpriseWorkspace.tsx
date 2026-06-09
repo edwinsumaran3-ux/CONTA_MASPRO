@@ -43,6 +43,7 @@ const PayrollGrid            = lazy(() => import('../payroll/PayrollGrid').then(
 const TreasuryPanel          = lazy(() => import('../treasury/TreasuryPanel').then(m => ({ default: m.TreasuryPanel })));
 const FinancialDashboard     = lazy(() => import('../reports/FinancialDashboard').then(m => ({ default: m.FinancialDashboard })));
 const BooksCenter            = lazy(() => import('../reports/BooksCenter').then(m => ({ default: m.BooksCenter })));
+const LibrosContables        = lazy(() => import('./LibrosContables').then(m => ({ default: m.LibrosContables })));
 const OwnerDashboard         = lazy(() => import('../client-portal/OwnerDashboard').then(m => ({ default: m.OwnerDashboard })));
 const WarehouseCommandCenter = lazy(() => import('../inventory/WarehouseCommandCenter'));
 const ApexLogixCore          = lazy(() => import('../inventory/EnterpriseFulfillmentCommandCenter'));
@@ -1480,7 +1481,16 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
       );
     }
     if (selectedView === 'libros') {
-      return <BooksCenter apiBase={API_BASE} tenantId={getTenantId()} />;
+      return (
+        <Suspense fallback={ModuleFallback}>
+          <LibrosContables
+            rows={rows}
+            companyName={currentCompany?.businessName || currentCompany?.ruc || 'Empresa'}
+            companyRuc={currentCompany?.ruc}
+            period={`${selectedYear}-${String(new Date().getMonth() + 1).padStart(2, '0')}`}
+          />
+        </Suspense>
+      );
     }
     if (selectedView === 'declaracion') {
       return (
