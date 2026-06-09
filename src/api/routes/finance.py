@@ -596,3 +596,88 @@ async def treasury_summary(ctx=Depends(require_roles("ADMIN", "CONTROLLER", "ACC
             "ap_pending_count": ap_row[0] if ap_row else 0,
             "ap_pending_amount": str(ap_row[1]) if ap_row else "0",
         }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# TREASURY DELETE — eliminar cuentas y movimientos
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.delete("/treasury/movements/{movement_id}")
+async def delete_treasury_movement(
+    movement_id: str,
+    ctx=Depends(require_roles("ADMIN", "CONTROLLER", "ACCOUNTANT")),
+):
+    """Elimina un movimiento de tesorería y revierte el saldo de la cuenta."""
+    async with UnitOfWork(AsyncSessionLocal, ctx["tenant_id"]) as uow:
+        res = await uow.session.execute(
+            select(TreasuryMovement).where(
+                TreasuryMovement.id == movement_id,
+                TreasuryMovement.tenant_id == ctx["tenant_id"],
+            )
+        )
+        movement = res.scalar_one_or_none()
+        if movement is None:
+            raise HTTPException(status_code=404, detail="Movimiento no encontrado")
+
+        # Revertir saldo en la cuenta
+        acc_res = await uow.session.execute(
+            select(TreasuryAccount).where(TreasuryAccount.id == str(movement.treasury_account_id))
+        )
+        account = acc_res.scalar_one_or_none()
+        if account:
+            bal = Decimal(str(account.current_balance))
+            if movement.movement_type in ("INCOME", "RECEIPT", "TRANSFER_IN"):
+                account.current_balance = bal - movement.amount
+            elif movement.movement_type in ("EXPENSE", "PAYMENT", "TRANSFER_OUT", "PETTY_CASH"):
+                account.current_balance = bal + movement.amount
+
+        await uow.session.delete(movement)
+        await uow.commit()
+        return {"deleted": movement_id}
+
+
+@router.delete("/treasury/accounts/{account_id}")
+async def delete_treasury_account(
+    account_id: str,
+    ctx=Depends(require_roles("ADMIN", "CONTROLLER", "ACCOUNTANT")),
+):
+    """Elimina una cuenta de tesorería y todos sus movimientos."""
+    async with UnitOfWork(AsyncSessionLocal, ctx["tenant_id"]) as uow:
+        acc_res = await uow.session.execute(
+            select(TreasuryAccount).where(
+                TreasuryAccount.id == account_id,
+                TreasuryAccount.tenant_id == ctx["tenant_id"],
+            )
+        )
+        account = acc_res.scalar_one_or_none()
+        if account is None:
+            raise HTTPException(status_code=404, detail="Cuenta no encontrada")
+
+        # Eliminar movimientos asociados primero
+        await uow.session.execute(
+            text("DELETE FROM treasury_movements WHERE treasury_account_id = :aid AND tenant_id = :tid"),
+            {"aid": account_id, "tid": ctx["tenant_id"]},
+        )
+        await uow.session.delete(account)
+        await uow.commit()
+        return {"deleted": account_id, "movements_deleted": True}
+
+
+@router.delete("/treasury/clear-all")
+async def clear_all_treasury_data(ctx=Depends(require_roles("ADMIN", "CONTROLLER"))):
+    """Elimina TODOS los movimientos y cuentas de tesorería del tenant."""
+    tid = ctx["tenant_id"]
+    async with UnitOfWork(AsyncSessionLocal, tid) as uow:
+        mv_res = await uow.session.execute(
+            text("DELETE FROM treasury_movements WHERE tenant_id = :tid RETURNING id"),
+            {"tid": tid},
+        )
+        acc_res = await uow.session.execute(
+            text("DELETE FROM treasury_accounts WHERE tenant_id = :tid RETURNING id"),
+            {"tid": tid},
+        )
+        await uow.commit()
+        return {
+            "movements_deleted": len(mv_res.fetchall()),
+            "accounts_deleted": len(acc_res.fetchall()),
+        }
