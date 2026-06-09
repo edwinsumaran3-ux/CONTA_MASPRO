@@ -96,7 +96,11 @@ async def _apply_schema_patches() -> None:
         # Crear unique constraint si no existe (evita futuros duplicados)
         """ALTER TABLE financial_documents ADD CONSTRAINT uq_financial_document
             UNIQUE (tenant_id, document_type, series, number, direction)""",
-        # Limpiar datos de prueba insertados durante desarrollo (compras y asientos de test)
+        # Limpiar datos de prueba — journal_lines primero (FK a journal_entries), luego entries
+        """DELETE FROM journal_lines WHERE entry_id IN (
+            SELECT id FROM journal_entries
+            WHERE source_id IN ('F001-PRUEBA-001','F001-PRUEBA-999','F001-COMPRA-REAL-001','F001-000200')
+        )""",
         "DELETE FROM journal_entries WHERE source_id IN ('F001-PRUEBA-001','F001-PRUEBA-999','F001-COMPRA-REAL-001','F001-000200')",
         "DELETE FROM financial_documents WHERE number IN ('PRUEBA-001','PRUEBA-999','COMPRA-REAL-001','000200')",
         # Limpiar tesorería de prueba
