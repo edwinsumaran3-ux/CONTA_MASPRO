@@ -132,14 +132,14 @@ export default function AccountingLivePanel({
   }, [selectedMovementId]);
 
   useEffect(() => {
-    if (!filtered.length) {
-      setSelectedId(null);
-      return;
-    }
-    if (!selectedId || !filtered.some((item) => item.id === selectedId)) {
-      setSelectedId(filtered[0].id);
-    }
-  }, [filtered, selectedId]);
+    setSelectedId((current) => {
+      if (!filtered.length) return null;
+      if (!current || !filtered.some((item) => item.id === current)) {
+        return filtered[0].id;
+      }
+      return current;
+    });
+  }, [filtered]);
 
   const selected = filtered.find((item) => item.id === selectedId) ?? filtered[0];
   const debe = filtered.reduce((a, b) => a + b.debit, 0);
