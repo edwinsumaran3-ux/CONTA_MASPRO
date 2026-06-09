@@ -27,7 +27,7 @@ class LedgerHashService:
             "currency": entry.currency,
             "total_debit": money(entry.total_debit),
             "total_credit": money(entry.total_credit),
-            "created_by": str(entry.created_by),
+            "created_by": str(entry.created_by) if entry.created_by else "00000000-0000-0000-0000-000000000000",
             "previous_hash": previous_hash,
             "lines": [{
                 "account_code": line.account_code,

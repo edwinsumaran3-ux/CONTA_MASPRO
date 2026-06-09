@@ -151,6 +151,12 @@ export const ApiConfigPanel: React.FC = () => {
                 {geminiValid ? '✓ Formato válido (AIzaSy...)' : '⚠ La clave debe comenzar con AIzaSy...'}
               </p>
             )}
+            <p style={{ margin: '8px 0 0', fontSize: 10, color: C.yellow, lineHeight: 1.5 }}>
+              ⚠ Nota de seguridad: esta clave se guarda en el navegador (localStorage) y se usa
+              desde el cliente. No la compartas ni la uses en dispositivos públicos.
+              Las funciones de contabilidad principal (OCR de facturas, registro PCGE) usan
+              credenciales del servidor y no dependen de esta clave.
+            </p>
           </div>
 
           {/* Acciones */}

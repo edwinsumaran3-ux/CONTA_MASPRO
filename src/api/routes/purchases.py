@@ -20,7 +20,7 @@ ROUNDING_INCOME_ACCOUNT = "759901"
 PRIOR_BALANCE_ACCOUNT = "421201"
 PAYABLE_ACCOUNT = "4212"
 IGV_CREDIT_ACCOUNT = "40111"
-AUTO_ROUNDING_TOLERANCE = Decimal("0.50")
+AUTO_ROUNDING_TOLERANCE = Decimal("0.10")
 
 COST_CENTER_LIBRARY = {
     "LIM-ADM": {
@@ -1089,7 +1089,13 @@ def _normalize_ai_response(data: dict[str, Any]) -> dict[str, Any]:
     if not supplier_name:
         warnings.append("No se pudo leer razon social del proveedor con seguridad.")
     if not supplier_ruc:
-        warnings.append("No se pudo leer RUC del proveedor con seguridad; no se debe inventar.")
+        warnings.append(
+            "⚠ IGV CRÉDITO FISCAL EN RIESGO: No se pudo identificar el RUC del proveedor. "
+            "Sin RUC válido de 11 dígitos no existe crédito fiscal según el Reglamento de "
+            "Comprobantes de Pago (Art. 19 LIGV). El asiento se genera como PROVISIONAL. "
+            "Completar manualmente antes del cierre mensual."
+        )
+        legal_warnings.append("SIN_RUC: crédito IGV no aplicable hasta verificación manual.")
 
     fallback_cc = _norm_upper(data.get("cost_center")) or CENTRO_COSTO_DEFAULT
 

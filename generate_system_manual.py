@@ -37,7 +37,7 @@ class NumberedCanvas(canvas.Canvas):
         self.setFillColor(colors.grey)
         page_text = f"Página {self._pageNumber}"
         self.drawRightString(7.5 * inch, 0.5 * inch, page_text)
-        self.drawCentredString(4.25 * inch, 0.5 * inch, "CONTA_PRO Enterprise v1.0")
+        self.drawCentredString(4.25 * inch, 0.5 * inch, "CONTA_PRO Enterprise v2.6")
 
 def create_manual():
     """Crear el documento PDF con el manual completo"""
@@ -103,7 +103,7 @@ def create_manual():
     # ==================== PORTADA ====================
     story.append(Spacer(1, 1.5 * inch))
     story.append(Paragraph("CONTA_PRO", title_style))
-    story.append(Paragraph("ENTERPRISE MASTER v1.5", title_style))
+    story.append(Paragraph("ENTERPRISE MASTER v2.6", title_style))
     story.append(Spacer(1, 0.3 * inch))
     
     subtitle_style = ParagraphStyle(

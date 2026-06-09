@@ -3,6 +3,7 @@ import { PlanSelectorModal } from '../../components/PlanSelectorModal';
 import type { PlanSelected } from '../../components/PlanSelectorModal';
 import { useTenantStore } from '../../hooks/useTenantStore';
 import type { Rubro } from '../../config/itemCatalog';
+import { APP_VERSION_FULL, APP_BUILD_YEAR } from '../../version';
 
 // ─── Tipos globales Google GSI + OAuth2 ────────────────────────────────────
 declare global {
@@ -433,10 +434,6 @@ export const LoginScreen: React.FC<Props> = ({ onLogin }) => {
     }, 700);
   };
 
-  const quickLogin = (u: typeof USERS[0]) => {
-    setLoginUser(u.username); setLoginPass(u.password); setLoginError('');
-  };
-
   // ─── Fondo 3D ─────────────────────────────────────────────────────────────
   const Background = () => (
     <>
@@ -596,7 +593,7 @@ export const LoginScreen: React.FC<Props> = ({ onLogin }) => {
         </div>
 
         <p style={{ textAlign: 'center', color: P.dim, fontSize: 10, marginTop: 16, letterSpacing: '0.05em' }}>
-          CONTA_PRO Enterprise v2.6 · 2026 · Todos los derechos reservados
+          {APP_VERSION_FULL} · {APP_BUILD_YEAR} · Todos los derechos reservados
         </p>
       </div>
     </div>
@@ -651,17 +648,7 @@ export const LoginScreen: React.FC<Props> = ({ onLogin }) => {
             </button>
           </form>
 
-          {/* Panel de acceso rápido — invisible, funcional */}
-          <div style={{ marginTop: 20, opacity: 0, pointerEvents: 'auto', userSelect: 'none' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-              {USERS.map(u => (
-                <button key={u.username} type="button" onClick={() => quickLogin(u)} style={{
-                  background: 'transparent', border: 'none', padding: '14px 10px',
-                  cursor: 'default', fontFamily: "'Segoe UI', Arial, sans-serif",
-                }} />
-              ))}
-            </div>
-          </div>
+          {/* Quick-login panel removed — use the login form above */}
 
           {import.meta.env.VITE_GOOGLE_CLIENT_ID && (<>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '16px 0 12px' }}>
