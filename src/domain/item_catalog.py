@@ -48,7 +48,7 @@ CATALOG: list[dict] = [
     {"code":"252-EP-GE-0001-F","name":"Casco de seguridad Clase E","cta":"252","nat":"EP","rub":"GE","tk":"F","unit":"UND","gasto":"6564","gasto_name":"Suministros - EPP","ai_keywords":["casco","seguridad","industrial","obra","clase e","casco seguridad","casco de obra","casco industrial","casco proteccion"]},
     {"code":"252-EP-GE-0002-F","name":"Guantes de cuero/nitrilo","cta":"252","nat":"EP","rub":"GE","tk":"F","unit":"PAR","gasto":"6564","gasto_name":"Suministros - EPP","ai_keywords":["guantes","cuero","nitrilo","seguridad","proteccion","guantes de trabajo","guantes industriales","guantes seguridad"]},
     {"code":"252-EP-GE-0003-F","name":"Lentes de seguridad luna clara","cta":"252","nat":"EP","rub":"GE","tk":"F","unit":"UND","gasto":"6564","gasto_name":"Suministros - EPP","ai_keywords":["lentes","gafas","seguridad","industrial","luna","lentes seguridad","gafas proteccion","lentes industriales","gafas de seguridad"]},
-    {"code":"252-EP-GE-0004-F","name":"Zapatos de seguridad punta acero","cta":"252","nat":"EP","rub":"GE","tk":"F","unit":"PAR","gasto":"6564","gasto_name":"Suministros - EPP","ai_keywords":["zapatos","botas","seguridad","punta","acero","calzado","botas seguridad","zapatos de seguridad","calzado de seguridad","botas industriales"]},
+    {"code":"252-EP-GE-0004-F","name":"Zapatos de seguridad punta acero","cta":"252","nat":"EP","rub":"GE","tk":"F","unit":"PAR","gasto":"6564","gasto_name":"Suministros - EPP","ai_keywords":["zapatos","botas","seguridad","calzado","zapatos punta acero","botas punta acero","calzado de seguridad","zapatos de seguridad","botas seguridad industrial","botas industriales"]},
     {"code":"252-EP-GE-0005-F","name":"Chaleco de seguridad reflectivo","cta":"252","nat":"EP","rub":"GE","tk":"F","unit":"UND","gasto":"6564","gasto_name":"Suministros - EPP","ai_keywords":["chaleco","seguridad","reflectivo","naranja","alta visibilidad","chaleco reflectivo","chaleco seguridad","chaleco naranja"]},
     {"code":"252-EP-GE-0006-F","name":"Protector de oídos (tapones)","cta":"252","nat":"EP","rub":"GE","tk":"F","unit":"PAR","gasto":"6564","gasto_name":"Suministros - EPP","ai_keywords":["tapones","oidos","protector","auditivo","orejeras","tapones de oidos","protector auditivo"]},
     {"code":"252-EP-GE-0007-F","name":"Mascarilla N95 respiratoria","cta":"252","nat":"EP","rub":"GE","tk":"F","unit":"UND","gasto":"6564","gasto_name":"Suministros - EPP","ai_keywords":["mascarilla","n95","respirador","proteccion","facial","mascarilla n95","respirador n95","mascarilla respiratoria","mascarilla industrial"]},
@@ -163,7 +163,11 @@ def lookup(description: str, account_code: str = "") -> dict | None:
     desc = description.lower()
     candidates: list[tuple[int, dict]] = []
     for keywords, item in _INDEX:
-        score = sum(1 for kw in keywords if kw in desc)
+        score = 0
+        for kw in keywords:
+            if kw in desc:
+                # Multi-word keywords score higher to avoid false positives
+                score += 2 if " " in kw else 1
         if score > 0:
             # Bonus si la cuenta PCGE coincide
             if account_code and item["cta"] and account_code.startswith(item["cta"]):
