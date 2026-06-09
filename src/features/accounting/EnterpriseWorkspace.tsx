@@ -837,11 +837,11 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
     return accessToken;
   };
 
-  /** Verifica tenant Y expiración; renueva si el token está vencido o por vencer */
+  /** Verifica expiración; renueva solo si el token está vencido o ausente */
   const getValidToken = async (candidate?: string | null) => {
-    const tenantId = getTenantId();
-    if (candidate && tokenTenantId(candidate) === tenantId) {
-      // Verificar expiración: si vence en menos de 60 s, renovar
+    // No verificar tenant_id del JWT — tokenTenantId retorna '' cuando el backend
+    // no lo incluye en el payload, lo que causaría un setToken/loop infinito.
+    if (candidate) {
       try {
         const parts = candidate.split('.');
         if (parts.length === 3) {

@@ -23,6 +23,8 @@ class LedgerRepository:
         result = await self.session.execute(
             select(AccountingPeriod)
             .where(AccountingPeriod.tenant_id == tenant_id, AccountingPeriod.year == year, AccountingPeriod.month == month)
+            .order_by(AccountingPeriod.created_at.asc())
+            .limit(1)
             .with_for_update()
         )
         return result.scalar_one_or_none()
@@ -231,9 +233,9 @@ async def _repo_upsert_chart_account(
             conditions.append(_ChartAccount.company_id == company_id)
 
     result = await self.session.execute(
-        _select(_ChartAccount).where(_and_(*conditions))
+        _select(_ChartAccount).where(_and_(*conditions)).limit(1)
     )
-    account = result.scalar_one_or_none()
+    account = result.scalars().first()
 
     if account is None:
         kwargs = {
@@ -292,9 +294,9 @@ async def _repo_upsert_cost_center(
             conditions.append(_CostCenter.company_id == company_id)
 
     result = await self.session.execute(
-        _select(_CostCenter).where(_and_(*conditions))
+        _select(_CostCenter).where(_and_(*conditions)).limit(1)
     )
-    center = result.scalar_one_or_none()
+    center = result.scalars().first()
 
     if center is None:
         kwargs = {
