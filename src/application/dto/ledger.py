@@ -1,6 +1,6 @@
 from datetime import date
 from decimal import Decimal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 class JournalLineRequest(BaseModel):
     account_code: str = Field(min_length=1, max_length=20)
@@ -15,6 +15,7 @@ class JournalLineRequest(BaseModel):
     document_number: str | None = None
 
 class InvoiceLineItemRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
     product_code: str = ""
     description: str = ""
     unit: str = "UND"
