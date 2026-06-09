@@ -466,28 +466,6 @@ async def post_purchase_invoice(payload: PurchasePostRequest, request: Request, 
         total_credit=str(entry.total_credit),
     )
 
-_BYPASS_TRIGGER_FN = """
-CREATE OR REPLACE FUNCTION prevent_immutable_mutation()
-RETURNS TRIGGER AS $$
-BEGIN
-  IF current_setting('app.allow_admin_delete', true) = 'true' THEN
-    RETURN OLD;
-  END IF;
-  RAISE EXCEPTION 'Registro inmutable. Operacion no permitida.';
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-"""
-
-_RESTORE_TRIGGER_FN = """
-CREATE OR REPLACE FUNCTION prevent_immutable_mutation()
-RETURNS TRIGGER AS $$
-BEGIN
-  RAISE EXCEPTION 'Registro inmutable. Operacion no permitida.';
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-"""
-
-
 @router.delete("/purchase-invoice/{entry_id}", status_code=200)
 async def delete_purchase_invoice(entry_id: UUID, ctx=Depends(get_current_context)):
     """Elimina una factura de compra y sus asientos del libro diario. Solo ADMIN/SUPER_ADMIN."""
@@ -496,13 +474,8 @@ async def delete_purchase_invoice(entry_id: UUID, ctx=Depends(get_current_contex
     tenant_id = ctx["tenant_id"]
     eid = str(entry_id)
     try:
-        # Paso 1: parchar el trigger para permitir bypass por config de sesión
         async with AsyncSessionLocal() as s:
-            await s.execute(text(_BYPASS_TRIGGER_FN))
-            await s.commit()
-
-        # Paso 2: verificar que el asiento existe y pertenece a COMPRAS
-        async with AsyncSessionLocal() as s:
+            # Verificar que el asiento existe y pertenece al tenant
             result = await s.execute(
                 select(JournalEntry.id, JournalEntry.source_module).where(
                     JournalEntry.id == entry_id,
@@ -512,16 +485,26 @@ async def delete_purchase_invoice(entry_id: UUID, ctx=Depends(get_current_contex
             row = result.first()
             if not row:
                 raise HTTPException(status_code=404, detail="Asiento no encontrado.")
-            source = (row.source_module or "").upper()
-            if source not in ("PURCHASING", "COMPRAS", ""):
-                raise HTTPException(status_code=422, detail=f"No se puede eliminar asiento de módulo '{row.source_module}'.")
 
-        # Paso 3: borrar con bypass activo usando SQL directo
-        async with AsyncSessionLocal() as s:
-            await s.execute(text("SELECT set_config('app.allow_admin_delete', 'true', true)"))
-            await s.execute(text("DELETE FROM financial_documents WHERE journal_entry_id = :eid::uuid AND tenant_id = :tid::uuid"), {"eid": eid, "tid": tenant_id})
-            await s.execute(text("DELETE FROM journal_lines WHERE entry_id = :eid::uuid"), {"eid": eid})
-            await s.execute(text("DELETE FROM journal_entries WHERE id = :eid::uuid AND tenant_id = :tid::uuid"), {"eid": eid, "tid": tenant_id})
+            # Deshabilitar triggers de inmutabilidad en la misma sesión
+            await s.execute(text("ALTER TABLE journal_lines DISABLE TRIGGER trg_no_delete_journal_lines"))
+            await s.execute(text("ALTER TABLE journal_entries DISABLE TRIGGER trg_no_delete_journal_entries"))
+
+            # Borrar en orden: documentos → líneas → asiento
+            await s.execute(text(
+                "DELETE FROM financial_documents WHERE journal_entry_id = :eid::uuid AND tenant_id = :tid::uuid"
+            ), {"eid": eid, "tid": tenant_id})
+            await s.execute(text(
+                "DELETE FROM journal_lines WHERE entry_id = :eid::uuid"
+            ), {"eid": eid})
+            await s.execute(text(
+                "DELETE FROM journal_entries WHERE id = :eid::uuid AND tenant_id = :tid::uuid"
+            ), {"eid": eid, "tid": tenant_id})
+
+            # Re-habilitar triggers
+            await s.execute(text("ALTER TABLE journal_lines ENABLE TRIGGER trg_no_delete_journal_lines"))
+            await s.execute(text("ALTER TABLE journal_entries ENABLE TRIGGER trg_no_delete_journal_entries"))
+
             await s.commit()
 
     except HTTPException:
@@ -529,14 +512,6 @@ async def delete_purchase_invoice(entry_id: UUID, ctx=Depends(get_current_contex
     except Exception as exc:
         logging.exception("Error al eliminar factura de compra entry_id=%s", entry_id)
         raise HTTPException(status_code=500, detail=f"Error interno al eliminar: {exc}") from exc
-    finally:
-        # Paso 4: restaurar trigger a modo estricto siempre
-        try:
-            async with AsyncSessionLocal() as s:
-                await s.execute(text(_RESTORE_TRIGGER_FN))
-                await s.commit()
-        except Exception:
-            pass
     return {"deleted": True, "entry_id": eid}
 
 
