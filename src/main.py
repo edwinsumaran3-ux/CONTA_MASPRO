@@ -89,38 +89,23 @@ async def _apply_schema_patches() -> None:
         "ALTER TABLE depreciation_runs DROP CONSTRAINT IF EXISTS depreciation_runs_created_by_fkey",
         "ALTER TABLE annual_closing_runs DROP CONSTRAINT IF EXISTS annual_closing_runs_created_by_fkey",
         # Limpiar duplicados en financial_documents (causaban MultipleResultsFound)
-        """
-        DELETE FROM financial_documents
-        WHERE id NOT IN (
+        """DELETE FROM financial_documents WHERE id NOT IN (
             SELECT DISTINCT ON (tenant_id, document_type, series, number, direction) id
             FROM financial_documents
             ORDER BY tenant_id, document_type, series, number, direction, created_at ASC NULLS LAST
-        )
-        """,
-        # Crear unique constraint para evitar futuros duplicados
-        """
-        DO $$ BEGIN
-            IF NOT EXISTS (
-                SELECT 1 FROM pg_constraint WHERE conname = 'uq_financial_document'
-            ) THEN
-                ALTER TABLE financial_documents
-                ADD CONSTRAINT uq_financial_document
-                UNIQUE (tenant_id, document_type, series, number, direction);
-            END IF;
-        END $$
-        """,
+        )""",
+        # Crear unique constraint si no existe (evita futuros duplicados)
+        """ALTER TABLE financial_documents ADD CONSTRAINT uq_financial_document
+            UNIQUE (tenant_id, document_type, series, number, direction)""",
     ]
     from sqlalchemy import text
-    try:
-        async with AsyncSessionLocal() as session:
-            for sql in patches:
-                try:
-                    await session.execute(text(sql))
-                except Exception:
-                    pass  # columna ya existe u otro error no crítico
-            await session.commit()
-    except Exception:
-        pass  # BD no disponible en arranque — ignorar
+    for sql in patches:
+        try:
+            async with AsyncSessionLocal() as session:
+                await session.execute(text(sql))
+                await session.commit()
+        except Exception:
+            pass  # columna/constraint ya existe u otro error no crítico
 
 
 @asynccontextmanager
