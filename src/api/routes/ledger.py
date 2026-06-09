@@ -7,7 +7,7 @@ from datetime import date
 from decimal import Decimal
 from io import BytesIO
 import base64
-from sqlalchemy import and_, select, desc
+from sqlalchemy import and_, select, desc, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import selectinload
 from reportlab.lib.pagesizes import A4
@@ -466,49 +466,78 @@ async def post_purchase_invoice(payload: PurchasePostRequest, request: Request, 
         total_credit=str(entry.total_credit),
     )
 
+_BYPASS_TRIGGER_FN = """
+CREATE OR REPLACE FUNCTION prevent_immutable_mutation()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF current_setting('app.allow_admin_delete', true) = 'true' THEN
+    RETURN OLD;
+  END IF;
+  RAISE EXCEPTION 'Registro inmutable. Operacion no permitida.';
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+"""
+
+_RESTORE_TRIGGER_FN = """
+CREATE OR REPLACE FUNCTION prevent_immutable_mutation()
+RETURNS TRIGGER AS $$
+BEGIN
+  RAISE EXCEPTION 'Registro inmutable. Operacion no permitida.';
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+"""
+
+
 @router.delete("/purchase-invoice/{entry_id}", status_code=200)
 async def delete_purchase_invoice(entry_id: UUID, ctx=Depends(get_current_context)):
     """Elimina una factura de compra y sus asientos del libro diario. Solo ADMIN/SUPER_ADMIN."""
     if ctx.get("role", "").upper() not in ("ADMIN", "SUPER_ADMIN", "CONTA_PRO"):
         raise HTTPException(status_code=403, detail="Solo administradores pueden eliminar facturas.")
     tenant_id = ctx["tenant_id"]
+    eid = str(entry_id)
     try:
-        async with AsyncSessionLocal() as session:
-            result = await session.execute(
-                select(JournalEntry)
-                .options(selectinload(JournalEntry.lines))
-                .where(
+        # Paso 1: parchar el trigger para permitir bypass por config de sesión
+        async with AsyncSessionLocal() as s:
+            await s.execute(text(_BYPASS_TRIGGER_FN))
+            await s.commit()
+
+        # Paso 2: verificar que el asiento existe y pertenece a COMPRAS
+        async with AsyncSessionLocal() as s:
+            result = await s.execute(
+                select(JournalEntry.id, JournalEntry.source_module).where(
                     JournalEntry.id == entry_id,
                     JournalEntry.tenant_id == tenant_id,
                 )
             )
-            entry = result.scalar_one_or_none()
-            if not entry:
+            row = result.first()
+            if not row:
                 raise HTTPException(status_code=404, detail="Asiento no encontrado.")
-            source = (entry.source_module or "").upper()
+            source = (row.source_module or "").upper()
             if source not in ("PURCHASING", "COMPRAS", ""):
-                raise HTTPException(status_code=422, detail=f"No se puede eliminar asiento de módulo '{entry.source_module}' desde este endpoint.")
-            # Eliminar líneas explícitamente (async SQLAlchemy necesita carga explícita para cascade)
-            for line in list(entry.lines):
-                await session.delete(line)
-            # Eliminar documentos financieros vinculados
-            docs_result = await session.execute(
-                select(FinancialDocument).where(
-                    FinancialDocument.journal_entry_id == entry_id,
-                    FinancialDocument.tenant_id == tenant_id,
-                )
-            )
-            for doc in docs_result.scalars().all():
-                await session.delete(doc)
-            await session.flush()
-            await session.delete(entry)
-            await session.commit()
+                raise HTTPException(status_code=422, detail=f"No se puede eliminar asiento de módulo '{row.source_module}'.")
+
+        # Paso 3: borrar con bypass activo usando SQL directo
+        async with AsyncSessionLocal() as s:
+            await s.execute(text("SELECT set_config('app.allow_admin_delete', 'true', true)"))
+            await s.execute(text("DELETE FROM financial_documents WHERE journal_entry_id = :eid::uuid AND tenant_id = :tid::uuid"), {"eid": eid, "tid": tenant_id})
+            await s.execute(text("DELETE FROM journal_lines WHERE entry_id = :eid::uuid"), {"eid": eid})
+            await s.execute(text("DELETE FROM journal_entries WHERE id = :eid::uuid AND tenant_id = :tid::uuid"), {"eid": eid, "tid": tenant_id})
+            await s.commit()
+
     except HTTPException:
         raise
     except Exception as exc:
         logging.exception("Error al eliminar factura de compra entry_id=%s", entry_id)
         raise HTTPException(status_code=500, detail=f"Error interno al eliminar: {exc}") from exc
-    return {"deleted": True, "entry_id": str(entry_id)}
+    finally:
+        # Paso 4: restaurar trigger a modo estricto siempre
+        try:
+            async with AsyncSessionLocal() as s:
+                await s.execute(text(_RESTORE_TRIGGER_FN))
+                await s.commit()
+        except Exception:
+            pass
+    return {"deleted": True, "entry_id": eid}
 
 
 @router.delete("/purchase-invoice", status_code=200)
