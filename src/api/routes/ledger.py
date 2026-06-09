@@ -468,8 +468,8 @@ async def post_purchase_invoice(payload: PurchasePostRequest, request: Request, 
 
 @router.delete("/purchase-invoice/{entry_id}", status_code=200)
 async def delete_purchase_invoice(entry_id: UUID, ctx=Depends(get_current_context)):
-    """Elimina una factura de compra y sus asientos del libro diario. Solo ADMIN."""
-    if ctx.get("role", "").upper() != "ADMIN":
+    """Elimina una factura de compra y sus asientos del libro diario. Solo ADMIN/SUPER_ADMIN."""
+    if ctx.get("role", "").upper() not in ("ADMIN", "SUPER_ADMIN", "CONTA_PRO"):
         raise HTTPException(status_code=403, detail="Solo administradores pueden eliminar facturas.")
     tenant_id = ctx["tenant_id"]
     async with AsyncSessionLocal() as session:
@@ -500,8 +500,8 @@ async def delete_purchase_invoice(entry_id: UUID, ctx=Depends(get_current_contex
 
 @router.delete("/purchase-invoice", status_code=200)
 async def purge_all_purchases(ctx=Depends(get_current_context)):
-    """Elimina TODOS los asientos de compras del tenant. Solo ADMIN. Usar solo para limpiar datos de prueba."""
-    if ctx.get("role", "").upper() != "ADMIN":
+    """Elimina TODOS los asientos de compras del tenant. Solo ADMIN/SUPER_ADMIN. Usar solo para limpiar datos de prueba."""
+    if ctx.get("role", "").upper() not in ("ADMIN", "SUPER_ADMIN", "CONTA_PRO"):
         raise HTTPException(status_code=403, detail="Solo administradores.")
     tenant_id = ctx["tenant_id"]
     deleted = 0
