@@ -689,8 +689,8 @@ async def clear_test_journal_data(ctx=Depends(require_roles("ADMIN"))):
     sqls = [
         "ALTER TABLE journal_lines DISABLE TRIGGER trg_no_delete_journal_lines",
         "ALTER TABLE journal_entries DISABLE TRIGGER trg_no_delete_journal_entries",
-        "DELETE FROM journal_lines WHERE entry_id = 'b5d35173-9058-4b99-812a-0b015e520156'",
-        "DELETE FROM journal_entries WHERE id = 'b5d35173-9058-4b99-812a-0b015e520156'",
+        "DELETE FROM journal_lines WHERE entry_id = 'a5c03eed-9f17-4425-98da-9cc245dc59b3'",
+        "DELETE FROM journal_entries WHERE id = 'a5c03eed-9f17-4425-98da-9cc245dc59b3'",
         "ALTER TABLE journal_lines ENABLE TRIGGER trg_no_delete_journal_lines",
         "ALTER TABLE journal_entries ENABLE TRIGGER trg_no_delete_journal_entries",
     ]
