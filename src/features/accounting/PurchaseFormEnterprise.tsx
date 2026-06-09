@@ -10,6 +10,8 @@ export type PurchaseFormData = {
   igv: string;
   expenseAccount: string;
   costCenter: string;
+  /** 'CONTADO' | 'CREDITO'. Default = CONTADO cuando no se indica en la factura. */
+  paymentType: 'CONTADO' | 'CREDITO';
 };
 
 type PurchaseItem = {
@@ -82,6 +84,7 @@ export type PurchaseSubmitPayload = {
   form: PurchaseFormData;
   supplierName: string;
   issueDate: string;
+  paymentType: 'CONTADO' | 'CREDITO';
   subtotal: string;
   igv: string;
   total: string;
@@ -909,6 +912,7 @@ export const PurchaseFormEnterprise = ({ form, onFormChange, tenantId, onClose, 
       form: nextForm,
       supplierName,
       issueDate,
+      paymentType: form.paymentType ?? 'CONTADO',
       subtotal: money(subtotal),
       igv: money(igv),
       total: money(total),
@@ -981,6 +985,24 @@ export const PurchaseFormEnterprise = ({ form, onFormChange, tenantId, onClose, 
         <Field label="Serie"><Input value={form.serie} onChange={(_, d) => updateField('serie', d.value)} /></Field>
         <Field label="Número"><Input value={form.number} onChange={(_, d) => updateField('number', d.value)} /></Field>
         <Field label="Fecha"><Input type="date" value={issueDate} onChange={(_, d) => setIssueDate(d.value)} /></Field>
+      </div>
+
+      <div className="pro-form-grid two" style={{ marginTop: 8 }}>
+        <Field label="Tipo de pago">
+          <select
+            value={form.paymentType ?? 'CONTADO'}
+            onChange={(e) => updateField('paymentType', e.target.value as 'CONTADO' | 'CREDITO')}
+            style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #d1d5db', fontSize: 13, background: '#fff', cursor: 'pointer', width: '100%' }}
+          >
+            <option value="CONTADO">Al Contado (efectivo/transferencia/banco)</option>
+            <option value="CREDITO">Al Crédito (cuenta por pagar 4212)</option>
+          </select>
+        </Field>
+        {(form.paymentType ?? 'CONTADO') === 'CREDITO' && (
+          <Field label="Vencimiento">
+            <Input type="date" value={(form as any).dueDate ?? ''} onChange={(_, d) => updateField('dueDate' as any, d.value)} />
+          </Field>
+        )}
       </div>
 
       <div className="pro-upload-card">

@@ -164,6 +164,186 @@ class LedgerPostingService:
     def _requires_cost_center(self, code: str) -> bool:
         return self._normalize_code(code, "0")[:1] in {"6", "9"}
 
+    # ─── PCGE Peru: Pago, Inventario y Variación ─────────────────────────────
+
+    # Mapa: prefijo cuenta inventario/activo → (cuenta compra 60x, nombre)
+    _INV_TO_PURCHASE: dict[str, tuple[str, str]] = {
+        "20": ("6011", "Compras de mercaderias"),
+        "21": ("6011", "Compras de mercaderias"),
+        "22": ("6011", "Compras de mercaderias"),
+        "23": ("6011", "Compras de mercaderias"),
+        "24": ("6021", "Compras de materias primas"),
+        "25": ("6032", "Compras de materiales auxiliares y suministros"),
+        "26": ("6033", "Compras de repuestos"),
+        "27": ("6032", "Compras de materiales auxiliares y suministros"),
+        "28": ("6032", "Compras de materiales auxiliares y suministros"),
+        "29": ("6039", "Compras de otros aprovisionamientos"),
+        "31": ("604",  "Compras de envases y embalajes"),
+        "32": ("605",  "Compras de suministros"),
+    }
+
+    # Mapa: prefijo cuenta inventario → (cuenta variacion 611x, nombre)
+    _INV_TO_VARIATION: dict[str, tuple[str, str]] = {
+        "20": ("6111", "Variacion de mercaderias"),
+        "21": ("6111", "Variacion de mercaderias"),
+        "22": ("6111", "Variacion de mercaderias"),
+        "23": ("6111", "Variacion de mercaderias"),
+        "24": ("6121", "Variacion de materias primas"),
+        "25": ("6131", "Variacion de materiales auxiliares, suministros y repuestos"),
+        "26": ("6131", "Variacion de materiales auxiliares, suministros y repuestos"),
+        "27": ("6131", "Variacion de materiales auxiliares, suministros y repuestos"),
+        "28": ("6131", "Variacion de materiales auxiliares, suministros y repuestos"),
+        "29": ("6131", "Variacion de materiales auxiliares, suministros y repuestos"),
+        "31": ("6141", "Variacion de envases y embalajes"),
+        "32": ("6151", "Variacion de suministros"),
+    }
+
+    _CONTADO_KEYWORDS = frozenset({
+        "contado", "efectivo", "transferencia", "deposito", "cheque",
+        "tarjeta", "visa", "mastercard", "yape", "plin", "inmediato", "cash",
+    })
+
+    def _detect_payment_type(self, purchase_data: dict) -> str:
+        """Detecta si la compra es CONTADO o CREDITO. Default: CONTADO."""
+        explicit = str(purchase_data.get("payment_type") or "").strip().upper()
+        if explicit in ("CONTADO", "CREDITO"):
+            return explicit
+        method = str(purchase_data.get("payment_method") or purchase_data.get("forma_pago") or "").lower()
+        if any(k in method for k in self._CONTADO_KEYWORDS):
+            return "CONTADO"
+        # Si la fecha de vencimiento es igual a la fecha de registro → contado
+        entry_date = str(purchase_data.get("entry_date") or "")[:10]
+        due_date = str(purchase_data.get("due_date") or "")[:10]
+        if due_date and entry_date and due_date == entry_date:
+            return "CONTADO"
+        return "CONTADO"  # default según política: si no indica → contado
+
+    def _get_payment_account(self, purchase_data: dict, payment_type: str) -> tuple[str, str]:
+        """Retorna (código, nombre) de la cuenta de pago según tipo."""
+        if payment_type == "CREDITO":
+            return ("4212", "Cuentas por pagar comerciales")
+        method = str(purchase_data.get("payment_method") or "").lower()
+        if "caja" in method or "efectivo" in method:
+            return ("1011", "Caja")
+        override = str(purchase_data.get("cash_account") or "").strip()
+        if override:
+            return (self._normalize_code(override, "1041"), "Efectivo y equivalentes de efectivo")
+        return ("1041", "Cuentas corrientes operativas")
+
+    def _is_inventory_account(self, code: str) -> bool:
+        """True si la cuenta es de inventario o activo fijo (Clase 2 o 3)."""
+        first = self._normalize_code(code, "0")[:1]
+        return first in ("2", "3")
+
+    def _is_fixed_asset_account(self, code: str) -> bool:
+        """True si es activo fijo (33x, 34x, 35x, 36x) — no pasa por 60x."""
+        prefix2 = self._normalize_code(code, "0")[:2]
+        return prefix2 in ("33", "34", "35", "36", "37", "38", "39")
+
+    def _get_purchase_account(self, inventory_code: str) -> tuple[str, str]:
+        """Mapea una cuenta 2x/3x al código 60x correspondiente (PCGE)."""
+        prefix2 = self._normalize_code(inventory_code, "0")[:2]
+        for key, val in self._INV_TO_PURCHASE.items():
+            if prefix2 == key:
+                return val
+        # fallback genérico para otros inventarios
+        return ("609", "Costos vinculados con las compras")
+
+    def _get_variation_account(self, inventory_code: str) -> tuple[str, str]:
+        """Mapea una cuenta 2x al código 61x de variación de existencias (PCGE)."""
+        prefix2 = self._normalize_code(inventory_code, "0")[:2]
+        for key, val in self._INV_TO_VARIATION.items():
+            if prefix2 == key:
+                return val
+        return ("6131", "Variacion de existencias")
+
+    def _normalize_lines_to_pcge(
+        self,
+        lines: list[dict],
+        payment_type: str,
+        payment_account: str,
+        payment_account_name: str,
+        doc_type: str,
+        serie: str,
+        number: str,
+        supplier_ruc: str | None,
+        cost_center: str | None,
+    ) -> list[dict]:
+        """
+        Aplica reglas PCGE Peru a las líneas del asiento:
+        1. Cuentas de inventario (2xx/3xx) en DEBE → agrega línea 60x DEBE + 61x HABER.
+           Activos fijos (33x+) → debit directo sin pasar por 60x.
+        2. Líneas HABER en 4212 → reemplaza por cuenta de pago real (contado/crédito).
+        No modifica si las líneas ya tienen cuentas 60x o 61x (ya es PCGE-correcto).
+        """
+        # Si ya tiene cuenta 60x en DEBE → no agregar (evita duplicar)
+        has_purchase_line = any(
+            self._normalize_code(str(l.get("account_code", "")), "0")[:2] in (
+                "60", "61"
+            ) and self._as_decimal(l.get("debit", "0")) > 0
+            for l in lines
+        )
+
+        payable_codes = {"4212", "421201", "42121", "42122", "4211", "421101"}
+        result: list[dict] = []
+
+        for line in lines:
+            raw_code = str(line.get("account_code") or "")
+            code = self._normalize_code(raw_code, raw_code)
+            debit = self._as_decimal(line.get("debit", "0"))
+            credit = self._as_decimal(line.get("credit", "0"))
+
+            # Regla 2: reemplazar C×P por cuenta de pago real
+            if code in payable_codes and credit > 0:
+                result.append({
+                    **line,
+                    "account_code": payment_account,
+                    "account_name": payment_account_name,
+                })
+                continue
+
+            # Regla 1: inventario en DEBE → insertar 60x + conservar 2xx + agregar 61x HABER
+            if not has_purchase_line and debit > 0 and self._is_inventory_account(code):
+                if self._is_fixed_asset_account(code):
+                    # Activo fijo: debit directo (no pasa por Clase 6)
+                    result.append(line)
+                    continue
+
+                purchase_code, purchase_name = self._get_purchase_account(code)
+                variation_code, variation_name = self._get_variation_account(code)
+
+                # Línea 60x DEBE (compra)
+                result.append({
+                    "account_code": purchase_code,
+                    "account_name": purchase_name,
+                    "debit": debit,
+                    "credit": Decimal("0.00"),
+                    "partner_ruc": supplier_ruc,
+                    "document_type": doc_type,
+                    "document_series": serie,
+                    "document_number": number,
+                    "cost_center": cost_center,
+                })
+                # Línea 2xx DEBE (destino: inventario)
+                result.append(line)
+                # Línea 61x HABER (variación — cierra el 60x en P&L)
+                result.append({
+                    "account_code": variation_code,
+                    "account_name": variation_name,
+                    "debit": Decimal("0.00"),
+                    "credit": debit,
+                    "partner_ruc": None,
+                    "document_type": doc_type,
+                    "document_series": serie,
+                    "document_number": number,
+                    "cost_center": None,
+                })
+                continue
+
+            result.append(line)
+
+        return result
+
     async def post_journal(self, payload: dict) -> JournalEntry:
         tenant_id = payload.get("tenant_id")
         if not tenant_id:
@@ -297,6 +477,12 @@ class LedgerPostingService:
         payable_balance = (total + percepcion - retencion - detraccion).quantize(Decimal("0.01"))
         company_id = purchase_data.get("company_id")
         supplier_ruc = purchase_data.get("supplier_ruc")
+
+        # PCGE: detectar tipo de pago y cuenta destino
+        payment_type = self._detect_payment_type(purchase_data)
+        pay_account, pay_account_name = self._get_payment_account(purchase_data, payment_type)
+        purchase_data["_payment_type"] = payment_type
+        purchase_data["_pay_account"] = pay_account
         doc_type = purchase_data.get("doc_type", "01")
         serie = str(purchase_data.get("serie") or "").strip().upper()
         number = str(purchase_data.get("number") or "").strip()
@@ -446,9 +632,13 @@ class LedgerPostingService:
                     "project_code": raw.get("project_code"),
                 })
         else:
+            raw_expense_code = self._normalize_code(purchase_data.get("expense_account", "659101"))
+            cost_center_val = purchase_data.get("cost_center")
+
+            # Línea principal: gasto/compra
             lines = [
                 {
-                    "account_code": self._normalize_code(purchase_data.get("expense_account", "659101")),
+                    "account_code": raw_expense_code,
                     "account_name": "Compras y gastos",
                     "debit": subtotal,
                     "credit": Decimal("0.00"),
@@ -456,7 +646,7 @@ class LedgerPostingService:
                     "document_type": doc_type,
                     "document_series": serie,
                     "document_number": number,
-                    "cost_center": purchase_data.get("cost_center"),
+                    "cost_center": cost_center_val,
                 },
                 {
                     "account_code": "40111",
@@ -470,8 +660,8 @@ class LedgerPostingService:
                     "cost_center": None,
                 },
                 {
-                    "account_code": "4212",
-                    "account_name": "Cuentas por pagar comerciales",
+                    "account_code": pay_account,
+                    "account_name": pay_account_name,
                     "debit": Decimal("0.00"),
                     "credit": payable_balance,
                     "partner_ruc": supplier_ruc,
@@ -487,6 +677,19 @@ class LedgerPostingService:
                 lines.append({"account_code": "40114", "account_name": "IGV retenciones", "debit": Decimal("0.00"), "credit": retencion, "partner_ruc": supplier_ruc, "document_type": doc_type, "document_series": serie, "document_number": number, "cost_center": None})
             if percepcion:
                 lines.append({"account_code": "40113", "account_name": "IGV percepciones", "debit": percepcion, "credit": Decimal("0.00"), "partner_ruc": supplier_ruc, "document_type": doc_type, "document_series": serie, "document_number": number, "cost_center": None})
+
+        # Normalizar a PCGE: agregar 60x+61x para inventarios; ajustar cuenta de pago
+        lines = self._normalize_lines_to_pcge(
+            lines,
+            payment_type=payment_type,
+            payment_account=pay_account,
+            payment_account_name=pay_account_name,
+            doc_type=doc_type,
+            serie=serie,
+            number=number,
+            supplier_ruc=supplier_ruc,
+            cost_center=purchase_data.get("cost_center"),
+        )
 
         total_debit = sum(self._as_decimal(line.get("debit")) for line in lines)
         total_credit = sum(self._as_decimal(line.get("credit")) for line in lines)
@@ -565,6 +768,8 @@ class LedgerPostingService:
             "supplier_ruc": supplier_ruc,
             "supplier_name": purchase_data.get("supplier_name"),
             "sire_ready": True,
+            "payment_type": payment_type,
+            "payment_account": pay_account,
             "late_registration_alert": late_registration_alert,
             "detraccion_amount": str(detraccion),
             "percepcion_amount": str(percepcion),

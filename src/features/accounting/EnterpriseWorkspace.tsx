@@ -597,6 +597,7 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
     igv: '',
     expenseAccount: '601101',
     costCenter: 'LIM-ADM',
+    paymentType: 'CONTADO',
   });
 
 
@@ -1187,6 +1188,7 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
       const issueDate = purchasePayload?.issueDate || entryDate;
       const postingPeriod = periodFromIsoDate(entryDate);
 
+      const paymentType = purchasePayload?.paymentType ?? formSource.paymentType ?? 'CONTADO';
       const items = purchasePayload?.items ?? [];
       const accountLines = purchasePayload?.accountLines ?? [];
       const accountsToUpsert = purchasePayload?.accountsToUpsert ?? [];
@@ -1218,6 +1220,7 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
         currency: 'PEN',
         expense_account: formSource.expenseAccount || accountLines[0]?.accountCode || '659101',
         cost_center: formSource.costCenter || accountLines[0]?.costCenter || 'LIM-ADM',
+        payment_type: paymentType,
 
         items: items.map((item) => ({
           code: item.code,
