@@ -329,8 +329,10 @@ class LedgerPostingService:
                         FinancialDocument.number == number,
                     )
                 )
+                .order_by(FinancialDocument.created_at.asc())
+                .limit(1)
             )
-            existing_document = existing_result.scalar_one_or_none()
+            existing_document = existing_result.scalars().first()
 
             if existing_document:
                 differences = self._existing_purchase_differences(

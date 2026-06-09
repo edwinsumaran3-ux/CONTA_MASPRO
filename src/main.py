@@ -88,6 +88,27 @@ async def _apply_schema_patches() -> None:
         "ALTER TABLE journal_lines DROP CONSTRAINT IF EXISTS journal_lines_created_by_fkey",
         "ALTER TABLE depreciation_runs DROP CONSTRAINT IF EXISTS depreciation_runs_created_by_fkey",
         "ALTER TABLE annual_closing_runs DROP CONSTRAINT IF EXISTS annual_closing_runs_created_by_fkey",
+        # Limpiar duplicados en financial_documents (causaban MultipleResultsFound)
+        """
+        DELETE FROM financial_documents
+        WHERE id NOT IN (
+            SELECT DISTINCT ON (tenant_id, document_type, series, number, direction) id
+            FROM financial_documents
+            ORDER BY tenant_id, document_type, series, number, direction, created_at ASC NULLS LAST
+        )
+        """,
+        # Crear unique constraint para evitar futuros duplicados
+        """
+        DO $$ BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint WHERE conname = 'uq_financial_document'
+            ) THEN
+                ALTER TABLE financial_documents
+                ADD CONSTRAINT uq_financial_document
+                UNIQUE (tenant_id, document_type, series, number, direction);
+            END IF;
+        END $$
+        """,
     ]
     from sqlalchemy import text
     try:
