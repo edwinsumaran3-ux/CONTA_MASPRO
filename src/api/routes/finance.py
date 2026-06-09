@@ -721,15 +721,16 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
     except Exception as e:
         results["journal"] = f"ERROR: {e}"
 
-    # Paso 3: DELETE kardex + warehouses + financial_documents
+    # Paso 3: DELETE kardex + inventory_balances + warehouses + financial_documents
     try:
         async with AsyncSessionLocal() as s:
             await s.execute(text("SELECT set_config('app.current_tenant', :t, true)"), {"t": tenant_id})
             r3 = await s.execute(text("DELETE FROM kardex_movements WHERE tenant_id=CAST(:t AS uuid)"), {"t": tenant_id})
+            r3b = await s.execute(text("DELETE FROM inventory_balances WHERE warehouse_id IN (SELECT id FROM warehouses WHERE tenant_id=CAST(:t AS uuid))"), {"t": tenant_id})
             r4 = await s.execute(text("DELETE FROM warehouses WHERE tenant_id=CAST(:t AS uuid)"), {"t": tenant_id})
             r5 = await s.execute(text("DELETE FROM financial_documents WHERE tenant_id=CAST(:t AS uuid)"), {"t": tenant_id})
             await s.commit()
-        results["inventory_docs"] = f"kardex={r3.rowcount} warehouses={r4.rowcount} docs={r5.rowcount}"
+        results["inventory_docs"] = f"kardex={r3.rowcount} inv_balances={r3b.rowcount} warehouses={r4.rowcount} docs={r5.rowcount}"
     except Exception as e:
         results["inventory_docs"] = f"ERROR: {e}"
 
