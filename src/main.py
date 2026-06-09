@@ -99,9 +99,16 @@ async def _apply_schema_patches() -> None:
         # Limpiar datos de prueba — journal_lines primero (FK a journal_entries), luego entries
         """DELETE FROM journal_lines WHERE entry_id IN (
             SELECT id FROM journal_entries
-            WHERE source_id IN ('F001-PRUEBA-001','F001-PRUEBA-999','F001-COMPRA-REAL-001','F001-000200')
+            WHERE description LIKE 'Compra F001-COMPRA-REAL-001%'
+               OR description LIKE 'Compra F001-000200%'
+               OR description LIKE 'Compra F001-PRUEBA%'
+               OR id IN ('07b08883-de73-46f4-baca-bd8f8f5a1804','cff00382-98c7-4da4-89e1-b94d1767037a')
         )""",
-        "DELETE FROM journal_entries WHERE source_id IN ('F001-PRUEBA-001','F001-PRUEBA-999','F001-COMPRA-REAL-001','F001-000200')",
+        """DELETE FROM journal_entries
+            WHERE description LIKE 'Compra F001-COMPRA-REAL-001%'
+               OR description LIKE 'Compra F001-000200%'
+               OR description LIKE 'Compra F001-PRUEBA%'
+               OR id IN ('07b08883-de73-46f4-baca-bd8f8f5a1804','cff00382-98c7-4da4-89e1-b94d1767037a')""",
         "DELETE FROM financial_documents WHERE number IN ('PRUEBA-001','PRUEBA-999','COMPRA-REAL-001','000200')",
         # Limpiar tesorería de prueba
         "DELETE FROM treasury_movements WHERE tenant_id='10410490-6800-4000-8000-680000000000'",
