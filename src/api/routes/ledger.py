@@ -472,29 +472,42 @@ async def delete_purchase_invoice(entry_id: UUID, ctx=Depends(get_current_contex
     if ctx.get("role", "").upper() not in ("ADMIN", "SUPER_ADMIN", "CONTA_PRO"):
         raise HTTPException(status_code=403, detail="Solo administradores pueden eliminar facturas.")
     tenant_id = ctx["tenant_id"]
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(JournalEntry).where(
-                JournalEntry.id == entry_id,
-                JournalEntry.tenant_id == tenant_id,
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(JournalEntry)
+                .options(selectinload(JournalEntry.lines))
+                .where(
+                    JournalEntry.id == entry_id,
+                    JournalEntry.tenant_id == tenant_id,
+                )
             )
-        )
-        entry = result.scalar_one_or_none()
-        if not entry:
-            raise HTTPException(status_code=404, detail="Asiento no encontrado.")
-        if entry.source_module.upper() not in ("PURCHASING", "COMPRAS"):
-            raise HTTPException(status_code=422, detail="Solo se pueden eliminar asientos de compras desde este endpoint.")
-        # Eliminar documentos financieros vinculados
-        docs_result = await session.execute(
-            select(FinancialDocument).where(
-                FinancialDocument.journal_entry_id == entry_id,
-                FinancialDocument.tenant_id == tenant_id,
+            entry = result.scalar_one_or_none()
+            if not entry:
+                raise HTTPException(status_code=404, detail="Asiento no encontrado.")
+            source = (entry.source_module or "").upper()
+            if source not in ("PURCHASING", "COMPRAS", ""):
+                raise HTTPException(status_code=422, detail=f"No se puede eliminar asiento de módulo '{entry.source_module}' desde este endpoint.")
+            # Eliminar líneas explícitamente (async SQLAlchemy necesita carga explícita para cascade)
+            for line in list(entry.lines):
+                await session.delete(line)
+            # Eliminar documentos financieros vinculados
+            docs_result = await session.execute(
+                select(FinancialDocument).where(
+                    FinancialDocument.journal_entry_id == entry_id,
+                    FinancialDocument.tenant_id == tenant_id,
+                )
             )
-        )
-        for doc in docs_result.scalars().all():
-            await session.delete(doc)
-        await session.delete(entry)  # líneas se eliminan en cascada
-        await session.commit()
+            for doc in docs_result.scalars().all():
+                await session.delete(doc)
+            await session.flush()
+            await session.delete(entry)
+            await session.commit()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logging.exception("Error al eliminar factura de compra entry_id=%s", entry_id)
+        raise HTTPException(status_code=500, detail=f"Error interno al eliminar: {exc}") from exc
     return {"deleted": True, "entry_id": str(entry_id)}
 
 
