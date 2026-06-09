@@ -714,8 +714,8 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
         async with AsyncSessionLocal() as s:
             await s.execute(text("SELECT set_config('app.current_tenant', :t, true)"), {"t": tenant_id})
             await s.execute(text("SELECT set_config('app.allow_admin_delete', 'true', true)"))
-            r1 = await s.execute(text("DELETE FROM journal_lines WHERE entry_id IN (SELECT id FROM journal_entries WHERE tenant_id=:t::uuid)"), {"t": tenant_id})
-            r2 = await s.execute(text("DELETE FROM journal_entries WHERE tenant_id=:t::uuid"), {"t": tenant_id})
+            r1 = await s.execute(text("DELETE FROM journal_lines WHERE entry_id IN (SELECT id FROM journal_entries WHERE tenant_id=CAST(:t AS uuid))"), {"t": tenant_id})
+            r2 = await s.execute(text("DELETE FROM journal_entries WHERE tenant_id=CAST(:t AS uuid)"), {"t": tenant_id})
             await s.commit()
         results["journal"] = f"lines={r1.rowcount} entries={r2.rowcount}"
     except Exception as e:
@@ -725,9 +725,9 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
     try:
         async with AsyncSessionLocal() as s:
             await s.execute(text("SELECT set_config('app.current_tenant', :t, true)"), {"t": tenant_id})
-            r3 = await s.execute(text("DELETE FROM kardex_movements WHERE tenant_id=:t::uuid"), {"t": tenant_id})
-            r4 = await s.execute(text("DELETE FROM warehouses WHERE tenant_id=:t::uuid"), {"t": tenant_id})
-            r5 = await s.execute(text("DELETE FROM financial_documents WHERE tenant_id=:t::uuid"), {"t": tenant_id})
+            r3 = await s.execute(text("DELETE FROM kardex_movements WHERE tenant_id=CAST(:t AS uuid)"), {"t": tenant_id})
+            r4 = await s.execute(text("DELETE FROM warehouses WHERE tenant_id=CAST(:t AS uuid)"), {"t": tenant_id})
+            r5 = await s.execute(text("DELETE FROM financial_documents WHERE tenant_id=CAST(:t AS uuid)"), {"t": tenant_id})
             await s.commit()
         results["inventory_docs"] = f"kardex={r3.rowcount} warehouses={r4.rowcount} docs={r5.rowcount}"
     except Exception as e:
