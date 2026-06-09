@@ -78,14 +78,13 @@ async def _apply_schema_patches() -> None:
         "ALTER TABLE products ADD COLUMN IF NOT EXISTS brand VARCHAR(100)",
         "ALTER TABLE products ADD COLUMN IF NOT EXISTS specs TEXT",
         "ALTER TABLE products ADD COLUMN IF NOT EXISTS detail_description TEXT",
-        # fix: created_by NOT NULL + FK a users violaba al registrar compras/ventas (usuario sistema no existe)
+        # fix: created_by NOT NULL + FK a users violaba al registrar compras/ventas
+        # NOTA: journal_lines NO tiene created_by — solo las 3 tablas siguientes:
         "ALTER TABLE journal_entries ALTER COLUMN created_by DROP NOT NULL",
-        "ALTER TABLE journal_lines ALTER COLUMN created_by DROP NOT NULL",
         "ALTER TABLE depreciation_runs ALTER COLUMN created_by DROP NOT NULL",
         "ALTER TABLE annual_closing_runs ALTER COLUMN created_by DROP NOT NULL",
         # Eliminar FK constraint — created_by es auditoría interna, no necesita FK a users
         "ALTER TABLE journal_entries DROP CONSTRAINT IF EXISTS journal_entries_created_by_fkey",
-        "ALTER TABLE journal_lines DROP CONSTRAINT IF EXISTS journal_lines_created_by_fkey",
         "ALTER TABLE depreciation_runs DROP CONSTRAINT IF EXISTS depreciation_runs_created_by_fkey",
         "ALTER TABLE annual_closing_runs DROP CONSTRAINT IF EXISTS annual_closing_runs_created_by_fkey",
         # Limpiar duplicados en financial_documents (causaban MultipleResultsFound)
