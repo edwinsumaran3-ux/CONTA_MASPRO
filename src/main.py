@@ -96,6 +96,9 @@ async def _apply_schema_patches() -> None:
         # Crear unique constraint si no existe (evita futuros duplicados)
         """ALTER TABLE financial_documents ADD CONSTRAINT uq_financial_document
             UNIQUE (tenant_id, document_type, series, number, direction)""",
+        # Limpiar datos de prueba insertados durante desarrollo (compras y asientos de test)
+        "DELETE FROM journal_entries WHERE source_id IN ('F001-PRUEBA-001','F001-PRUEBA-999','F001-COMPRA-REAL-001')",
+        "DELETE FROM financial_documents WHERE number IN ('PRUEBA-001','PRUEBA-999','COMPRA-REAL-001')",
     ]
     from sqlalchemy import text
     for sql in patches:
