@@ -50,6 +50,10 @@ interface ComprasEnhancedProps {
   onAuditoriaIA?: () => void;
   /** Comprobantes externos (desde el módulo contable) */
   comprobantes?: Comprobante[];
+  /** Solo ADMIN ve controles de eliminación y purga */
+  userRole?: string;
+  /** Callback para notificar al padre que un comprobante fue eliminado */
+  onDeleted?: (id: string) => void;
 }
 
 /* ─── Helpers ─── */
@@ -173,14 +177,78 @@ const MiniBarChart = ({ values, color }: { values: { label: string; v: number }[
 
 /* ─── Componente principal ─── */
 export const ComprasEnhanced = ({
+  apiBase,
+  token,
+  tenantId,
   onStatus,
   onRegisterCompra,
   onAuditoriaIA,
   comprobantes: externalDocs,
+  userRole,
+  onDeleted,
 }: ComprasEnhancedProps) => {
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const docs = externalDocs ?? [];
+  const [search, setSearch] = useState('');
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<Set<string>>(new Set());
+  const [purgingAll, setPurgingAll] = useState(false);
+  const isAdmin = userRole?.toUpperCase() === 'ADMIN';
+
+  const allDocs = externalDocs ?? [];
+  const docs = search.trim()
+    ? allDocs.filter(d =>
+        d.documento.toLowerCase().includes(search.toLowerCase()) ||
+        d.proveedor.toLowerCase().includes(search.toLowerCase()) ||
+        d.ruc.includes(search.trim())
+      )
+    : allDocs;
   const period = '2026-05';
+
+  const handleDelete = async (id: string) => {
+    if (!apiBase || !token) return;
+    setDeleting(prev => new Set(prev).add(id));
+    setConfirmId(null);
+    try {
+      const res = await fetch(`${apiBase}/ledger/purchase-invoice/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}`, 'X-Tenant-Id': tenantId ?? '' },
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        onStatus?.(`Error al eliminar: ${err.detail ?? res.statusText}`);
+      } else {
+        onStatus?.('Factura eliminada correctamente.');
+        if (selectedId === id) setSelectedId(null);
+        onDeleted?.(id);
+      }
+    } catch {
+      onStatus?.('Error de red al eliminar la factura.');
+    } finally {
+      setDeleting(prev => { const s = new Set(prev); s.delete(id); return s; });
+    }
+  };
+
+  const handlePurgeAll = async () => {
+    if (!apiBase || !token) return;
+    setPurgingAll(true);
+    try {
+      const res = await fetch(`${apiBase}/ledger/purchase-invoice`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}`, 'X-Tenant-Id': tenantId ?? '' },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        onStatus?.(`Purga completada: ${data.count ?? 0} asientos eliminados.`);
+        allDocs.forEach(d => onDeleted?.(d.id));
+      } else {
+        onStatus?.(`Error en purga: ${data.detail ?? res.statusText}`);
+      }
+    } catch {
+      onStatus?.('Error de red al purgar datos.');
+    } finally {
+      setPurgingAll(false);
+    }
+  };
 
   /* KPIs */
   const kpis = useMemo(() => {
@@ -281,6 +349,22 @@ export const ComprasEnhanced = ({
           >
             🛡️ Auditoría IA
           </button>
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => { if (window.confirm(`¿Eliminar TODOS los ${allDocs.length} comprobantes de compra? Esta acción no se puede deshacer.`)) handlePurgeAll(); }}
+              disabled={purgingAll || allDocs.length === 0}
+              style={{
+                padding: '7px 14px', fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                background: `${C.red}18`, color: C.red,
+                border: `1px solid ${C.red}44`, borderRadius: 6,
+                opacity: purgingAll || allDocs.length === 0 ? 0.5 : 1,
+                display: 'flex', alignItems: 'center', gap: 5,
+              }}
+            >
+              🗑 {purgingAll ? 'Limpiando…' : 'Limpiar datos demo'}
+            </button>
+          )}
           <button
             type="button"
             onClick={onRegisterCompra}
@@ -342,7 +426,7 @@ export const ComprasEnhanced = ({
             }}>
               <div style={{
                 padding: '10px 14px', borderBottom: `1px solid ${C.border}`,
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap',
                 background: `linear-gradient(90deg, ${C.purple}0d 0%, transparent 100%)`,
               }}>
                 <div>
@@ -351,17 +435,34 @@ export const ComprasEnhanced = ({
                     Período {period} · orden cronológico
                   </span>
                 </div>
-                <Badge label={`${kpis.count} registros`} type="info" />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input
+                    type="text"
+                    placeholder="Buscar por N° factura, proveedor o RUC…"
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                    style={{
+                      padding: '5px 10px', fontSize: 11, background: C.bgRow,
+                      border: `1px solid ${C.border}`, borderRadius: 6, color: C.text,
+                      outline: 'none', width: 240,
+                    }}
+                  />
+                  {search && (
+                    <button type="button" onClick={() => setSearch('')}
+                      style={{ background: 'none', border: 'none', color: C.textMut, cursor: 'pointer', fontSize: 14 }}>✕</button>
+                  )}
+                  <Badge label={`${docs.length} registros`} type="info" />
+                </div>
               </div>
 
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                   <thead>
                     <tr style={{ background: C.header }}>
-                      {['FECHA', 'PROVEEDOR', 'RUC', 'DOCUMENTO', 'BASE', 'IGV', 'TOTAL', 'ESTADO'].map((h, i) => (
+                      {['FECHA', 'PROVEEDOR', 'RUC', 'DOCUMENTO', 'BASE', 'IGV', 'TOTAL', 'ESTADO', ...(isAdmin ? ['ACCIONES'] : [])].map((h, i) => (
                         <th key={i} style={{
                           padding: '8px 10px',
-                          textAlign: (i >= 4 && i <= 6) ? 'right' : i === 7 ? 'center' : 'left',
+                          textAlign: (i >= 4 && i <= 6) ? 'right' : (i === 7 || i === 8) ? 'center' : 'left',
                           fontSize: 10, fontWeight: 700, color: C.textMut,
                           textTransform: 'uppercase', letterSpacing: '0.06em',
                           borderBottom: `1px solid ${C.border}`, whiteSpace: 'nowrap',
@@ -401,6 +502,32 @@ export const ComprasEnhanced = ({
                         <td style={{ padding: '9px 10px', textAlign: 'center' }}>
                           <DocStatusBadge status={d.estado} />
                         </td>
+                        {isAdmin && (
+                          <td style={{ padding: '9px 10px', textAlign: 'center' }}>
+                            {confirmId === d.id ? (
+                              <div style={{ display: 'flex', gap: 4, justifyContent: 'center' }}>
+                                <button type="button"
+                                  onClick={e => { e.stopPropagation(); handleDelete(d.id); }}
+                                  disabled={deleting.has(d.id)}
+                                  style={{ padding: '3px 8px', fontSize: 10, fontWeight: 700, background: `${C.red}22`, color: C.red, border: `1px solid ${C.red}55`, borderRadius: 5, cursor: 'pointer' }}>
+                                  Confirmar
+                                </button>
+                                <button type="button"
+                                  onClick={e => { e.stopPropagation(); setConfirmId(null); }}
+                                  style={{ padding: '3px 8px', fontSize: 10, background: 'none', color: C.textMut, border: `1px solid ${C.border}`, borderRadius: 5, cursor: 'pointer' }}>
+                                  No
+                                </button>
+                              </div>
+                            ) : (
+                              <button type="button"
+                                onClick={e => { e.stopPropagation(); setConfirmId(d.id); }}
+                                disabled={deleting.has(d.id)}
+                                style={{ padding: '3px 8px', fontSize: 10, fontWeight: 700, background: `${C.red}14`, color: C.red, border: `1px solid ${C.red}33`, borderRadius: 5, cursor: 'pointer', opacity: deleting.has(d.id) ? 0.5 : 1 }}>
+                                {deleting.has(d.id) ? '…' : '🗑 Eliminar'}
+                              </button>
+                            )}
+                          </td>
+                        )}
                       </tr>
                     ))}
                     {/* Totales */}
@@ -418,6 +545,7 @@ export const ComprasEnhanced = ({
                         S/ {fmt(kpis.total)}
                       </td>
                       <td />
+                      {isAdmin && <td />}
                     </tr>
                   </tbody>
                 </table>

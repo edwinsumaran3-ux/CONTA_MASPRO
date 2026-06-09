@@ -1558,6 +1558,10 @@ const [accountDetailOpen, setAccountDetailOpen] = useState(false);
           onRegisterCompra={() => setActivePanel('COMPRA')}
           onAuditoriaIA={() => setStatusMessage('Auditoría IA activa — analizando comprobantes...')}
           comprobantes={comprobantesReales}
+          userRole={userRole}
+          onDeleted={(deletedId) => {
+            setRows(prev => prev.filter(r => r.id !== deletedId && r.entryId !== deletedId));
+          }}
         />
       );
     }

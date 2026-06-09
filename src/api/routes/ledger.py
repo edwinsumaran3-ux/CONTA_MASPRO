@@ -466,6 +466,68 @@ async def post_purchase_invoice(payload: PurchasePostRequest, request: Request, 
         total_credit=str(entry.total_credit),
     )
 
+@router.delete("/purchase-invoice/{entry_id}", status_code=200)
+async def delete_purchase_invoice(entry_id: UUID, ctx=Depends(get_current_context)):
+    """Elimina una factura de compra y sus asientos del libro diario. Solo ADMIN."""
+    if ctx.get("role", "").upper() != "ADMIN":
+        raise HTTPException(status_code=403, detail="Solo administradores pueden eliminar facturas.")
+    tenant_id = ctx["tenant_id"]
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(JournalEntry).where(
+                JournalEntry.id == entry_id,
+                JournalEntry.tenant_id == tenant_id,
+            )
+        )
+        entry = result.scalar_one_or_none()
+        if not entry:
+            raise HTTPException(status_code=404, detail="Asiento no encontrado.")
+        if entry.source_module.upper() not in ("PURCHASING", "COMPRAS"):
+            raise HTTPException(status_code=422, detail="Solo se pueden eliminar asientos de compras desde este endpoint.")
+        # Eliminar documentos financieros vinculados
+        docs_result = await session.execute(
+            select(FinancialDocument).where(
+                FinancialDocument.journal_entry_id == entry_id,
+                FinancialDocument.tenant_id == tenant_id,
+            )
+        )
+        for doc in docs_result.scalars().all():
+            await session.delete(doc)
+        await session.delete(entry)  # líneas se eliminan en cascada
+        await session.commit()
+    return {"deleted": True, "entry_id": str(entry_id)}
+
+
+@router.delete("/purchase-invoice", status_code=200)
+async def purge_all_purchases(ctx=Depends(get_current_context)):
+    """Elimina TODOS los asientos de compras del tenant. Solo ADMIN. Usar solo para limpiar datos de prueba."""
+    if ctx.get("role", "").upper() != "ADMIN":
+        raise HTTPException(status_code=403, detail="Solo administradores.")
+    tenant_id = ctx["tenant_id"]
+    deleted = 0
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(JournalEntry).where(
+                JournalEntry.tenant_id == tenant_id,
+                JournalEntry.source_module.in_(["PURCHASING", "COMPRAS"]),
+            )
+        )
+        entries = result.scalars().all()
+        for entry in entries:
+            docs_result = await session.execute(
+                select(FinancialDocument).where(
+                    FinancialDocument.journal_entry_id == entry.id,
+                    FinancialDocument.tenant_id == tenant_id,
+                )
+            )
+            for doc in docs_result.scalars().all():
+                await session.delete(doc)
+            await session.delete(entry)
+            deleted += 1
+        await session.commit()
+    return {"deleted": True, "count": deleted}
+
+
 @router.get("/journal", response_model=list[JournalEntryListItem])
 async def list_journal(
     year: int | None = None,
