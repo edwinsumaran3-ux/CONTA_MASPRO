@@ -681,3 +681,24 @@ async def clear_all_treasury_data(ctx=Depends(require_roles("ADMIN", "CONTROLLER
             "movements_deleted": len(mv_res.fetchall()),
             "accounts_deleted": len(acc_res.fetchall()),
         }
+
+
+@router.delete("/dev/purge-test-data")
+async def purge_all_test_data(ctx=Depends(require_roles("ADMIN"))):
+    """Purga TODOS los datos de prueba: journal, kardex, warehouse. Solo ADMIN."""
+    sqls = [
+        "ALTER TABLE journal_lines DISABLE TRIGGER trg_no_delete_journal_lines",
+        "ALTER TABLE journal_entries DISABLE TRIGGER trg_no_delete_journal_entries",
+        "DELETE FROM journal_lines WHERE entry_id = 'aa9f0340-f99a-4d56-afc3-02886fcd0ac6'",
+        "DELETE FROM journal_entries WHERE id = 'aa9f0340-f99a-4d56-afc3-02886fcd0ac6'",
+        "ALTER TABLE journal_lines ENABLE TRIGGER trg_no_delete_journal_lines",
+        "ALTER TABLE journal_entries ENABLE TRIGGER trg_no_delete_journal_entries",
+        "DELETE FROM kardex_movements WHERE warehouse_id = '4b2520e8-d42b-4749-8ae1-1e6fd64c1be8'",
+        "DELETE FROM warehouses WHERE id = '4b2520e8-d42b-4749-8ae1-1e6fd64c1be8'",
+        "DELETE FROM financial_documents WHERE number IN ('DEMO-001','MULTI-001','FIX-001')",
+    ]
+    async with UnitOfWork(AsyncSessionLocal, ctx["tenant_id"]) as uow:
+        for sql in sqls:
+            await uow.session.execute(text(sql))
+        await uow.commit()
+    return {"status": "ok"}
