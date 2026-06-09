@@ -687,23 +687,19 @@ async def clear_all_treasury_data(ctx=Depends(require_roles("ADMIN", "CONTROLLER
 async def clear_test_journal_data(ctx=Depends(require_roles("ADMIN"))):
     """Elimina asientos de prueba del diario (solo ADMIN)."""
     tid = ctx["tenant_id"]
-    TEST_IDS = (
-        "07b08883-de73-46f4-baca-bd8f8f5a1804",
-        "cff00382-98c7-4da4-89e1-b94d1767037a",
-    )
     async with UnitOfWork(AsyncSessionLocal, tid) as uow:
-        lines_res = await uow.session.execute(
-            text(
-                "DELETE FROM journal_lines WHERE entry_id = ANY(:ids) RETURNING id"
-            ),
-            {"ids": list(TEST_IDS)},
-        )
-        entries_res = await uow.session.execute(
-            text(
-                "DELETE FROM journal_entries WHERE id = ANY(:ids) AND tenant_id = :tid RETURNING id"
-            ),
-            {"ids": list(TEST_IDS), "tid": tid},
-        )
+        lines_res = await uow.session.execute(text(
+            "DELETE FROM journal_lines WHERE entry_id IN ("
+            "  '07b08883-de73-46f4-baca-bd8f8f5a1804',"
+            "  'cff00382-98c7-4da4-89e1-b94d1767037a'"
+            ") RETURNING id"
+        ))
+        entries_res = await uow.session.execute(text(
+            "DELETE FROM journal_entries WHERE id IN ("
+            "  '07b08883-de73-46f4-baca-bd8f8f5a1804',"
+            "  'cff00382-98c7-4da4-89e1-b94d1767037a'"
+            ") RETURNING id"
+        ))
         await uow.commit()
         return {
             "lines_deleted": len(lines_res.fetchall()),
