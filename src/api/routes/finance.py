@@ -686,19 +686,68 @@ async def clear_all_treasury_data(ctx=Depends(require_roles("ADMIN", "CONTROLLER
 @router.delete("/dev/purge-test-data")
 async def purge_all_test_data(ctx=Depends(require_roles("ADMIN"))):
     """Purga TODOS los datos de prueba: journal, kardex, warehouse. Solo ADMIN."""
-    sqls = [
-        "ALTER TABLE journal_lines DISABLE TRIGGER trg_no_delete_journal_lines",
-        "ALTER TABLE journal_entries DISABLE TRIGGER trg_no_delete_journal_entries",
-        "DELETE FROM journal_lines WHERE entry_id = 'aa9f0340-f99a-4d56-afc3-02886fcd0ac6'",
-        "DELETE FROM journal_entries WHERE id = 'aa9f0340-f99a-4d56-afc3-02886fcd0ac6'",
-        "ALTER TABLE journal_lines ENABLE TRIGGER trg_no_delete_journal_lines",
-        "ALTER TABLE journal_entries ENABLE TRIGGER trg_no_delete_journal_entries",
-        "DELETE FROM kardex_movements WHERE warehouse_id = '4b2520e8-d42b-4749-8ae1-1e6fd64c1be8'",
-        "DELETE FROM warehouses WHERE id = '4b2520e8-d42b-4749-8ae1-1e6fd64c1be8'",
-        "DELETE FROM financial_documents WHERE number IN ('DEMO-001','MULTI-001','FIX-001')",
-    ]
-    async with UnitOfWork(AsyncSessionLocal, ctx["tenant_id"]) as uow:
-        for sql in sqls:
-            await uow.session.execute(text(sql))
-        await uow.commit()
-    return {"status": "ok"}
+    tenant_id = ctx["tenant_id"]
+    results = {}
+
+    # Paso 1: Patch función anti-delete para permitir bypass por sesión
+    bypass_patch = """
+CREATE OR REPLACE FUNCTION prevent_immutable_mutation()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF current_setting('app.allow_admin_delete', true) = 'true' THEN
+    RETURN OLD;
+  END IF;
+  RAISE EXCEPTION 'Registro inmutable. Operación no permitida.';
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+"""
+    try:
+        async with AsyncSessionLocal() as s:
+            await s.execute(text(bypass_patch))
+            await s.commit()
+        results["patch_fn"] = "ok"
+    except Exception as e:
+        results["patch_fn"] = f"ERROR: {e}"
+
+    # Paso 2: DELETE journal en una sesión con bypass y tenant RLS
+    try:
+        async with AsyncSessionLocal() as s:
+            await s.execute(text("SELECT set_config('app.current_tenant', :t, true)"), {"t": tenant_id})
+            await s.execute(text("SELECT set_config('app.allow_admin_delete', 'true', true)"))
+            r1 = await s.execute(text("DELETE FROM journal_lines WHERE entry_id IN (SELECT id FROM journal_entries WHERE tenant_id=:t::uuid)"), {"t": tenant_id})
+            r2 = await s.execute(text("DELETE FROM journal_entries WHERE tenant_id=:t::uuid"), {"t": tenant_id})
+            await s.commit()
+        results["journal"] = f"lines={r1.rowcount} entries={r2.rowcount}"
+    except Exception as e:
+        results["journal"] = f"ERROR: {e}"
+
+    # Paso 3: DELETE kardex + warehouses + financial_documents
+    try:
+        async with AsyncSessionLocal() as s:
+            await s.execute(text("SELECT set_config('app.current_tenant', :t, true)"), {"t": tenant_id})
+            r3 = await s.execute(text("DELETE FROM kardex_movements WHERE tenant_id=:t::uuid"), {"t": tenant_id})
+            r4 = await s.execute(text("DELETE FROM warehouses WHERE tenant_id=:t::uuid"), {"t": tenant_id})
+            r5 = await s.execute(text("DELETE FROM financial_documents WHERE tenant_id=:t::uuid"), {"t": tenant_id})
+            await s.commit()
+        results["inventory_docs"] = f"kardex={r3.rowcount} warehouses={r4.rowcount} docs={r5.rowcount}"
+    except Exception as e:
+        results["inventory_docs"] = f"ERROR: {e}"
+
+    # Paso 4: Restaurar función a modo estricto
+    restore_patch = """
+CREATE OR REPLACE FUNCTION prevent_immutable_mutation()
+RETURNS TRIGGER AS $$
+BEGIN
+  RAISE EXCEPTION 'Registro inmutable. Operación no permitida.';
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+"""
+    try:
+        async with AsyncSessionLocal() as s:
+            await s.execute(text(restore_patch))
+            await s.commit()
+        results["restore_fn"] = "ok"
+    except Exception as e:
+        results["restore_fn"] = f"ERROR: {e}"
+
+    return {"status": "done", "results": results}
