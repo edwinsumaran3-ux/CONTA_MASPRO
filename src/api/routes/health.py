@@ -4,7 +4,7 @@ router = APIRouter(tags=["Health"])
 @router.get("/health")
 @router.get("/salud")
 async def health():
-    return {"status": "ok", "service": "CONTA_PRO Enterprise", "build": "20260608-cleanup-v7"}
+    return {"status": "ok", "service": "CONTA_PRO Enterprise", "build": "20260608-final"}
 
 @router.get("/favicon.ico", include_in_schema=False)
 async def favicon():

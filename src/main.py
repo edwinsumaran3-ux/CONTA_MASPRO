@@ -110,32 +110,6 @@ async def _apply_schema_patches() -> None:
         except Exception:
             pass  # columna/constraint ya existe u otro error no crítico
 
-    # Limpieza de journal con RLS — requiere SET del tenant en la misma transacción
-    _TENANT = "10410490-6800-4000-8000-680000000000"
-    _ENTRY_IDS = "('07b08883-de73-46f4-baca-bd8f8f5a1804','cff00382-98c7-4da4-89e1-b94d1767037a')"
-    cleanup_sqls = [
-        f"SET LOCAL app.current_tenant = '{_TENANT}'",
-        f"""DELETE FROM journal_lines WHERE entry_id IN (
-            SELECT id FROM journal_entries
-            WHERE description LIKE 'Compra F001-COMPRA-REAL-001%'
-               OR description LIKE 'Compra F001-000200%'
-               OR description LIKE 'Compra F001-PRUEBA%'
-               OR id IN {_ENTRY_IDS}
-        )""",
-        f"""DELETE FROM journal_entries
-            WHERE description LIKE 'Compra F001-COMPRA-REAL-001%'
-               OR description LIKE 'Compra F001-000200%'
-               OR description LIKE 'Compra F001-PRUEBA%'
-               OR id IN {_ENTRY_IDS}""",
-    ]
-    try:
-        async with AsyncSessionLocal() as session:
-            for sql in cleanup_sqls:
-                await session.execute(text(sql))
-            await session.commit()
-    except Exception:
-        pass
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
